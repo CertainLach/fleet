@@ -1,9 +1,10 @@
-use crate::nix::{NixBuild, NixEval, SECRETS_ATTRIBUTE};
+use crate::{command::CommandExt, nix::SECRETS_ATTRIBUTE};
 use anyhow::{bail, Result};
 use log::info;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
 	collections::{BTreeMap, BTreeSet, HashMap},
+	process::Command,
 	time::Instant,
 	time::SystemTime,
 };
@@ -18,14 +19,17 @@ pub struct SecretListData {
 	renew_in: Option<u64>,
 }
 pub fn list_secrets() -> Result<HashMap<String, SecretListData>> {
-	NixEval::new(format!("{}", SECRETS_ATTRIBUTE))
-		.apply(
+	Command::new("nix")
+		.inherit_stdio()
+		.arg("eval")
+		.arg(SECRETS_ATTRIBUTE)
+		.arg("--apply")
+		.arg(
 			r#"
 				s: (builtins.mapAttrs (n: {owners, expireIn, ...}: {
 					inherit owners expireIn;
 				}) s)
-			"#
-			.into(),
+			"#,
 		)
 		.run_json()
 }
@@ -122,9 +126,17 @@ impl SecretDb {
 		let renew_at = data
 			.renew_in
 			.map(|hours| created_at + Duration::hours(hours as i64));
-		let built = NixBuild::new(format!("{}.{}.generator", SECRETS_ATTRIBUTE, secret))
-			.env("RAGE_KEYS".into(), rage_keys)
-			.env("IMPURITY_SOURCE".into(), format!("{:?}", Instant::now()))
+		let built = tempfile::tempdir()?;
+		Command::new("nix")
+			.inherit_stdio()
+			.arg("build")
+			.arg(format!("{}.{}.generator", SECRETS_ATTRIBUTE, secret))
+			.arg("--no-link")
+			.arg("--out-link")
+			.arg(built.path())
+			.arg("--impure")
+			.env("RAGE_KEYS", rage_keys)
+			.env("IMPURITY_SOURCE", format!("{:?}", Instant::now()))
 			.run()?;
 		let path = built.path().to_owned();
 		let mut secret_data = SecretData {

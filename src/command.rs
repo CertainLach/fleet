@@ -4,31 +4,46 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
-pub struct CommandOutput(pub Vec<u8>);
-impl CommandOutput {
-	pub fn into_json<'d, T: Deserialize<'d>>(&'d self) -> Result<T> {
-		let str = self.as_str().ok();
-		Ok(serde_json::from_slice(&self.0).with_context(|| format!("{:?}", str))?)
-	}
-	pub fn as_str(&self) -> Result<&str> {
-		Ok(std::str::from_utf8(&self.0)?)
-	}
+pub trait CommandExt {
+	fn run(&mut self) -> Result<()>;
+	fn run_json<T: DeserializeOwned>(&mut self) -> Result<T>;
+	fn run_string(&mut self) -> Result<String>;
+	fn inherit_stdio(&mut self) -> &mut Self;
+	fn ssh_on(host: impl AsRef<OsStr>, command: impl AsRef<OsStr>) -> Self;
 }
 
-pub fn ssh_command<I, S>(host: impl AsRef<OsStr>, command: I) -> Result<CommandOutput>
-where
-	I: IntoIterator<Item = S>,
-	S: AsRef<OsStr>,
-{
-	let out = Command::new("ssh")
-		.stderr(Stdio::inherit())
-		.arg(host)
-		.args(command)
-		.output()?;
-	if !out.status.success() {
-		anyhow::bail!("command failed");
+impl CommandExt for Command {
+	fn inherit_stdio(&mut self) -> &mut Self {
+		self.stderr(Stdio::inherit());
+		self
 	}
-	Ok(CommandOutput(out.stdout))
+
+	fn run(&mut self) -> Result<()> {
+		let out = self.output()?;
+		if !out.status.success() {
+			anyhow::bail!("command failed");
+		}
+		Ok(())
+	}
+
+	fn run_json<T: DeserializeOwned>(&mut self) -> Result<T> {
+		let str = self.run_string()?;
+		Ok(serde_json::from_str(&str).with_context(|| format!("{:?}", str))?)
+	}
+
+	fn run_string(&mut self) -> Result<String> {
+		let out = self.output()?;
+		if !out.status.success() {
+			anyhow::bail!("command failed");
+		}
+		Ok(String::from_utf8(out.stdout)?)
+	}
+
+	fn ssh_on(host: impl AsRef<OsStr>, command: impl AsRef<OsStr>) -> Self {
+		let mut cmd = Command::new("ssh");
+		cmd.arg(host).arg("--").arg(command);
+		cmd
+	}
 }

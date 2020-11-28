@@ -1,20 +1,21 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, process::Command};
 
 use anyhow::Result;
 use log::*;
 
-use crate::{
-	command::ssh_command,
-	nix::{NixEval, HOSTS_ATTRIBUTE},
-};
+use crate::{command::CommandExt, nix::HOSTS_ATTRIBUTE};
 
 use serde::{Deserialize, Serialize};
 
 use super::db::DbData;
 
 pub fn list_hosts() -> Result<Vec<String>> {
-	Ok(NixEval::new(HOSTS_ATTRIBUTE.into())
-		.apply("builtins.attrNames".into())
+	Ok(Command::new("nix")
+		.inherit_stdio()
+		.arg("eval")
+		.arg(HOSTS_ATTRIBUTE)
+		.arg("--apply")
+		.arg("builtins.attrNames")
 		.run_json()?)
 }
 
@@ -29,10 +30,9 @@ impl DbData for KeyDb {
 impl KeyDb {
 	pub fn fetch_key(&mut self, host: &str) -> Result<()> {
 		info!("Fetching key for {}", host);
-		let key = ssh_command(host, &["cat", "/etc/ssh/ssh_host_ed25519_key.pub"])?
-			.as_str()?
-			.trim()
-			.to_owned();
+		let key = Command::ssh_on(host, "cat")
+			.arg("/etc/ssh/ssh_host_ed25519_key.pub")
+			.run_string()?;
 		self.host_keys.insert(host.to_owned(), key);
 		Ok(())
 	}
