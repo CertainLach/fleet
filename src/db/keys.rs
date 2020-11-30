@@ -11,11 +11,14 @@ use super::db::DbData;
 
 pub fn list_hosts() -> Result<Vec<String>> {
 	Ok(Command::new("nix")
+		.args(&[
+			"eval",
+			HOSTS_ATTRIBUTE,
+			"--apply",
+			"builtins.attrNames",
+			"--json",
+		])
 		.inherit_stdio()
-		.arg("eval")
-		.arg(HOSTS_ATTRIBUTE)
-		.arg("--apply")
-		.arg("builtins.attrNames")
 		.run_json()?)
 }
 
