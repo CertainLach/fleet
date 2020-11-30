@@ -18,20 +18,20 @@
 
             }
           )
-        ] ++ common.modules ++ import ./modules/modules.nix {
+        ] ++ common.modules ++ import ../modules/modules.nix {
           pkgs = nixpkgs;
           lib = nixpkgs.lib;
         };
 
         specialArgs = {
-          fleet = import ./lib/fleetLib.nix {
+          fleet = import ./fleetLib.nix {
             inherit nixpkgs hosts;
           };
         };
       };
       configuredHosts = root.config.hosts;
       configuredSecrets = root.config.secrets;
-      configuredSystems = listToAttrs (
+      configuredSystems = nixpkgs.lib.listToAttrs (
         map (
           name: {
             inherit name; value = nixpkgs.lib.nixosSystem {
