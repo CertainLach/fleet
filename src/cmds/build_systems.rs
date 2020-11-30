@@ -14,6 +14,9 @@ pub struct BuildSystems {
 	/// Hosts to skip
 	#[clap(long, number_of_values = 1)]
 	skip: Vec<String>,
+	/// Host, which should be threaten as localhost
+	#[clap(long, env = "FLEET_LOCALHOST")]
+	localhost: Option<String>,
 	#[clap(subcommand)]
 	subcommand: Option<Subcommand>,
 }
@@ -27,6 +30,18 @@ enum Subcommand {
 	/// test + boot
 	Switch,
 }
+impl Subcommand {
+	fn should_switch_profile(&self) -> bool {
+		matches!(self, Self::Test | Self::Switch)
+	}
+	fn name(&self) -> &'static str {
+		match self {
+			Self::Test => "test",
+			Self::Boot => "boot",
+			Self::Switch => "switch",
+		}
+	}
+}
 
 impl BuildSystems {
 	pub fn run(self) -> Result<()> {
@@ -39,42 +54,61 @@ impl BuildSystems {
 				warn!("Skipping host {}", host);
 				continue;
 			}
+			let is_local = Some(host) == self.localhost.as_ref();
 			info!("Building host {}", host);
-			let built = tempfile::tempdir()?;
+			let built = {
+				let dir = tempfile::tempdir()?;
+				dir.path().to_owned()
+			};
+
 			Command::new("nix")
-				.inherit_stdio()
-				.arg("build")
+				.args(&["build", "--impure", "--no-link", "--out-link"])
+				.arg(&built)
 				.arg(format!(
 					"{}.{}.config.system.build.toplevel",
 					SYSTEMS_ATTRIBUTE, host,
 				))
-				.arg("--no-link")
-				.arg("--out-link")
-				.arg(built.path())
-				.arg("--impure")
 				.env("SECRET_DATA", data.clone())
-				.run()?;
-			info!("Uploading system closure");
-			let full_path = std::fs::canonicalize(built.path())?;
-			info!("{:?}", full_path);
-			Command::new("nix")
 				.inherit_stdio()
-				.arg("copy")
-				.arg(full_path)
-				.arg("--to")
-				.arg(format!("ssh://root@{}", host))
 				.run()?;
-			match self.subcommand {
-				Some(Subcommand::Test) => {
-					info!("Setting system to test")
+			let built = std::fs::canonicalize(built)?;
+			info!("Built closure: {:?}", built);
+			if !is_local {
+				info!("Uploading system closure");
+				Command::new("nix")
+					.args(&["copy", "--to"])
+					.arg(format!("ssh://root@{}", host))
+					.arg(&built)
+					.inherit_stdio()
+					.run()?;
+			}
+			if let Some(subcommand) = &self.subcommand {
+				if subcommand.should_switch_profile() {
+					info!("Switching generation");
+					if !is_local {
+						Command::ssh_on(host, "nix-env")
+					} else {
+						Command::new("nix-env")
+					}
+					.args(&["-p", "/nix/var/nix/profiles/system", "--set"])
+					.arg(&built)
+					.inherit_stdio()
+					.run()?;
 				}
-				Some(Subcommand::Boot) => {
-					info!("Setting system to switch on boot")
+				info!("Executing activation script");
+				let mut switch_script = built.clone();
+				switch_script.push("bin");
+				switch_script.push("switch-to-configuration");
+				info!("{:?}", switch_script);
+				if !is_local {
+					Command::ssh_on(host, "sudo")
+				} else {
+					Command::new("sudo")
 				}
-				Some(Subcommand::Switch) => {
-					info!("Switching to configuration")
-				}
-				_ => {}
+				.arg(switch_script)
+				.arg(subcommand.name())
+				.inherit_stdio()
+				.run()?;
 			}
 		}
 		Ok(())
