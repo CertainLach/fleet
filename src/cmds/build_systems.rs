@@ -85,7 +85,7 @@ impl BuildSystems {
 				nix_build.arg("--builders").arg(builders);
 			}
 			if let Some(jobs) = &self.jobs {
-				nix_build.arg("--jobs");
+				nix_build.arg("--max-jobs");
 				nix_build.arg(format!("{}", jobs));
 			}
 			if !self.fail_fast {
