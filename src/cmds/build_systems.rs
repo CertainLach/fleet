@@ -17,6 +17,15 @@ pub struct BuildSystems {
 	/// Host, which should be threaten as localhost
 	#[clap(long, env = "FLEET_LOCALHOST")]
 	localhost: Option<String>,
+	/// --builders arg for nix
+	#[clap(long)]
+	builders: Option<String>,
+	/// Jobs to run locally
+	#[clap(long)]
+	jobs: Option<usize>,
+	/// Do not continue on error
+	#[clap(long)]
+	fail_fast: bool,
 	#[clap(subcommand)]
 	subcommand: Option<Subcommand>,
 }
@@ -61,16 +70,29 @@ impl BuildSystems {
 				dir.path().to_owned()
 			};
 
-			Command::new("nix")
+			let mut nix_build = Command::new("nix");
+			nix_build
 				.args(&["build", "--impure", "--no-link", "--out-link"])
 				.arg(&built)
 				.arg(format!(
 					"{}.{}.config.system.build.toplevel",
 					SYSTEMS_ATTRIBUTE, host,
 				))
-				.env("SECRET_DATA", data.clone())
-				.inherit_stdio()
-				.run()?;
+				.env("SECRET_DATA", data.clone());
+
+			if let Some(builders) = &self.builders {
+				println!("Using builders: {}", builders);
+				nix_build.arg("--builders").arg(builders);
+			}
+			if let Some(jobs) = &self.jobs {
+				nix_build.arg("--jobs");
+				nix_build.arg(format!("{}", jobs));
+			}
+			if !self.fail_fast {
+				nix_build.arg("--keep-going");
+			}
+
+			nix_build.inherit_stdio().run()?;
 			let built = std::fs::canonicalize(built)?;
 			info!("Built closure: {:?}", built);
 			if !is_local {
@@ -86,11 +108,11 @@ impl BuildSystems {
 				if subcommand.should_switch_profile() {
 					info!("Switching generation");
 					if !is_local {
-						Command::ssh_on(host, "nix-env")
+						Command::ssh_on(host, "sudo")
 					} else {
-						Command::new("nix-env")
+						Command::new("sudo")
 					}
-					.args(&["-p", "/nix/var/nix/profiles/system", "--set"])
+					.args(&["nix-env", "-p", "/nix/var/nix/profiles/system", "--set"])
 					.arg(&built)
 					.inherit_stdio()
 					.run()?;
