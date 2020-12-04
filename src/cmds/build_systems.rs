@@ -10,10 +10,14 @@ use clap::Clap;
 use log::{info, warn};
 
 #[derive(Clap)]
+#[clap(group = clap::ArgGroup::new("target"))]
 pub struct BuildSystems {
 	/// Hosts to skip
-	#[clap(long, number_of_values = 1)]
+	#[clap(long, number_of_values = 1, group = "target")]
 	skip: Vec<String>,
+	/// Hosts to build
+	#[clap(long, number_of_values = 1, group = "target")]
+	only: Vec<String>,
 	/// Host, which should be threaten as localhost
 	#[clap(long, env = "FLEET_LOCALHOST")]
 	localhost: Option<String>,
@@ -59,7 +63,7 @@ impl BuildSystems {
 		let data = SecretDb::open(&db)?.generate_nix_data()?;
 
 		for host in hosts.iter() {
-			if self.skip.contains(host) {
+			if self.only.len() > 0 && !self.only.contains(host) || self.skip.contains(host) {
 				warn!("Skipping host {}", host);
 				continue;
 			}
