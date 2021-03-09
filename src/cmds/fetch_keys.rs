@@ -1,16 +1,13 @@
-use crate::db::{
-	keys::{list_hosts, KeyDb},
-	Db, DbData,
-};
+use crate::host::FleetOpts;
 use anyhow::Result;
 use clap::Clap;
-use log::info;
+use log::{info, warn};
 
 #[derive(Clap)]
 pub struct FetchKeys {
-	/// Fetch if already exists the following hosts
-	#[clap(short = 'f', long)]
-	force_hosts: Vec<String>,
+	#[clap(flatten)]
+	fleet_opts: FleetOpts,
+
 	/// If true - remove orphaned keys
 	#[clap(long)]
 	cleanup: bool,
@@ -18,24 +15,26 @@ pub struct FetchKeys {
 
 impl FetchKeys {
 	pub fn run(self) -> Result<()> {
-		let db = Db::new(".fleet")?;
-		let hosts = list_hosts()?;
-		let mut keys = KeyDb::open(&db)?;
+		let fleet = self.fleet_opts.build()?;
+		let hosts = fleet.list_hosts()?;
 		for host in hosts.iter() {
-			let force = self.force_hosts.contains(&host);
-			keys.ensure_key_loaded(host, force)?;
+			if host.skip() {
+				warn!("Skipped host {}", host.hostname);
+				continue;
+			}
+			host.key()?;
 		}
-		let orphans: Vec<_> = hosts.iter().filter(|h| !keys.has_key(h)).cloned().collect();
+		let orphans: Vec<_> = fleet.list_orphaned_keys()?;
 		if !orphans.is_empty() {
 			if self.cleanup {
 				info!("Removed orphan host keys:");
 			} else {
 				info!("Orphan host keys found, run with --cleanup to remove them from db:");
 			}
-			for key in orphans {
-				info!("- {}", key);
+			for (name, path) in orphans {
+				info!("- {}", name);
 				if self.cleanup {
-					keys.remove_key(&key)
+					std::fs::remove_file(path)?;
 				}
 			}
 		}
