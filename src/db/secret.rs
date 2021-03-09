@@ -1,4 +1,4 @@
-use crate::{command::CommandExt, nix::SECRETS_ATTRIBUTE};
+use crate::{command::CommandExt, host::FleetConfig, nix::SECRETS_ATTRIBUTE};
 use anyhow::{bail, Result};
 use log::info;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -10,7 +10,7 @@ use std::{
 };
 use time::{Duration, PrimitiveDateTime};
 
-use super::{db::DbData, keys::KeyDb};
+use super::db::DbData;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SecretListData {
@@ -109,7 +109,7 @@ impl SecretDb {
 	// Secrets are generated on machine running fleet command
 	pub fn generate_secret(
 		&mut self,
-		keys: &KeyDb,
+		fleet_config: FleetConfig,
 		secret: &str,
 		data: &SecretListData,
 	) -> Result<()> {
@@ -119,7 +119,7 @@ impl SecretDb {
 				rage_keys.push(' ');
 			}
 			rage_keys.push_str("--recipient \"");
-			rage_keys.push_str(&keys.get_host_key(&owner)?);
+			// rage_keys.push_str(&keys.get_host_key(&owner)?);
 			rage_keys.push('"')
 		}
 		let created_at: PrimitiveDateTime = SystemTime::now().into();
@@ -184,13 +184,13 @@ impl SecretDb {
 	}
 	pub fn ensure_generated(
 		&mut self,
-		keys: &KeyDb,
+		// keys: &KeyDb,
 		secret: &str,
 		data: &SecretListData,
 	) -> Result<()> {
 		if self.need_to_generate(secret, data)? {
 			info!("Generating secret {}", secret);
-			self.generate_secret(keys, secret, data)?;
+			// self.generate_secret(keys, secret, data)?;
 		}
 
 		Ok(())
