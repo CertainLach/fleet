@@ -1,4 +1,8 @@
+#![feature(once_cell)]
+
 pub mod command;
+pub mod host;
+pub mod keys;
 
 pub mod cmds;
 pub mod db;
