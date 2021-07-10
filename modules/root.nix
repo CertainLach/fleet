@@ -22,7 +22,7 @@ let
       data = mkOption {
         type = attrsOf anything;
         description = "Generated secret data, do not set it yourself";
-        default = {};
+        default = { };
       };
     };
   };
@@ -31,7 +31,7 @@ let
       modules = mkOption {
         type = listOf anything;
         description = "List of nixos modules";
-        default = [];
+        default = [ ];
       };
       network = mkOption {
         type = submodule {
@@ -55,14 +55,22 @@ in
   options = with types; {
     hosts = mkOption {
       type = attrsOf (submodule host);
-      default = {};
+      default = { };
       description = "Configurations of individual hosts";
     };
     secrets = mkOption {
       type = attrsOf (submodule secret);
-      default = {};
+      default = { };
       description = "Secrets";
     };
   };
-  config = {};
+  config = {
+    secrets =
+      if builtins?getEnv then
+        let
+          stringData = builtins.getEnv "SECRET_DATA";
+        in
+        if stringData != "" then (builtins.fromJSON stringData) else { }
+      else { };
+  };
 }

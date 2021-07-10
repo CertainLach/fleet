@@ -1,4 +1,4 @@
-{ config, lib, nixpkgs, fleet, ... }: with lib; with fleet; let
+{ config, lib, fleet, ... }: with lib; with fleet; let
   cfg = config.networking.wireguard;
   genWgKey = { owners }: {
     inherit owners;
@@ -32,25 +32,27 @@
   };
 
   hostKeys = listToAttrs (
-    map (
-      hostName: {
-        name = "wg-key-${hostName}";
-        value = genWgKey {
-          owners = [ hostName ];
-        };
-      }
-    )
+    map
+      (
+        hostName: {
+          name = "wg-key-${hostName}";
+          value = genWgKey {
+            owners = [ hostName ];
+          };
+        }
+      )
       hostNames
   );
   psks = listToAttrs (
-    map (
-      { a, b }: {
-        name = "wg-psk-${a}-${b}";
-        value = genWgPsk {
-          owners = [ a b ];
-        };
-      }
-    )
+    map
+      (
+        { a, b }: {
+          name = "wg-psk-${a}-${b}";
+          value = genWgPsk {
+            owners = [ a b ];
+          };
+        }
+      )
       hostsCartesian
   );
 in
@@ -82,16 +84,19 @@ in
             networking.wireguard.enable = true;
             networking.wireguard.interfaces.fleetwg = {
               privateKeyFile = "/run/secrets/wg-key-${hostName}";
-              peers = map (
-                peer: let
-                  pair = hostsPair hostName peer;
-                in
+              peers = map
+                (
+                  peer:
+                  let
+                    pair = hostsPair hostName peer;
+                  in
                   {
                     publicKey = config.secrets."wg-key-${peer}".data.key;
                     presharedKey = "/run/secrets/wg-psk-${pair.a}-${pair.b}";
                     allowedIPs = cfg.allowedIPs.${peer};
                   }
-              ) hostNames;
+                )
+                hostNames;
             };
           }
         ];
