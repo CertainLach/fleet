@@ -15,7 +15,6 @@ use std::{
 struct DbInternal {
 	root: PathBuf,
 	locked_paths: HashSet<PathBuf>,
-	_lockfile: lockfile::Lockfile,
 }
 
 pub trait DbData: DeserializeOwned + Serialize + Default {
@@ -32,13 +31,9 @@ impl Db {
 	pub fn new(root: impl AsRef<Path>) -> Result<Self> {
 		let root: &Path = root.as_ref();
 		std::fs::create_dir_all(&root).context("db root")?;
-		let mut lockfile = root.to_owned();
-		lockfile.push(".lock");
-		let lockfile = lockfile::Lockfile::create(lockfile).context("db lock")?;
 		Ok(Db(Arc::new(Mutex::new(DbInternal {
 			root: root.to_owned(),
 			locked_paths: HashSet::new(),
-			_lockfile: lockfile,
 		}))))
 	}
 
