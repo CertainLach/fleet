@@ -21,9 +21,10 @@ impl CommandExt for Command {
 	}
 
 	fn run(&mut self) -> Result<()> {
+		self.inherit_stdio();
 		let out = self.output()?;
 		if !out.status.success() {
-			anyhow::bail!("command failed with status {}", out.status);
+			anyhow::bail!("command ({:?}) failed with status {}", self, out.status);
 		}
 		Ok(())
 	}
@@ -34,9 +35,10 @@ impl CommandExt for Command {
 	}
 
 	fn run_string(&mut self) -> Result<String> {
+		self.inherit_stdio();
 		let out = self.output()?;
 		if !out.status.success() {
-			anyhow::bail!("command failed");
+			anyhow::bail!("command ({:?}) failed with status {}", self, out.status);
 		}
 		Ok(String::from_utf8(out.stdout)?)
 	}
