@@ -37,14 +37,18 @@ pub enum Value {
 peg::parser! {
 pub grammar nixlike() for str {
 	rule number() -> i64
-		= v:$(['0'..='9' | '+' | '-']+) {? v.parse().map_err(|_| "<number>")}
+		= quiet! { v:$(['0'..='9' | '+' | '-']+) {? v.parse().map_err(|_| "<number>")} } / expected!("<number>")
+	rule string_char() -> &'input str
+		= "\\\"" { "\"" }
+		/ "\\\\" { "\\" }
+		/ c:$([_]) { c }
 	rule string() -> String
-		= "\"" v:$((!"\"" [_])+) "\"" { v.to_owned() }
+		= quiet! { "\"" v:(!"\"" c:string_char() {c})* "\"" { v.into_iter().collect() } } / expected!("<string>")
 	rule boolean() -> bool
-		= "true" {true}
-		/ "false" {false}
+		= quiet! { "true" {true}
+		/ "false" {false} } / expected!("<boolean>")
 	rule indent() -> String
-		= s:$(['a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-']+) { s.to_owned() }
+		= quiet! { s:$(['a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-']+) { s.to_owned() } } / expected!("<identifier>")
 	rule object() -> BTreeMap<String, Value>
 		= "{" _
 			e:(k:indent()++(_ "." _) _ "=" _ v:value() _ ";" _ {(k, v)})*
