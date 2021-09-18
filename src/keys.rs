@@ -20,14 +20,6 @@ impl Config {
 		let host = data.hosts.entry(host.to_string()).or_default();
 		host.encryption_key = key.trim().to_string();
 	}
-	pub fn update_secret(&self, host: &str, name: &str, value: &[u8]) {
-		let mut data = self.data_mut();
-		let host = data.hosts.entry(host.to_string()).or_default();
-		host.encrypted_secrets.insert(
-			name.to_string(),
-			format!("[ENCRYPTED:{}]", base64::encode(value)),
-		);
-	}
 
 	pub fn key(&self, host: &str) -> anyhow::Result<String> {
 		if let Some(key) = self.cached_key(host) {
@@ -35,7 +27,7 @@ impl Config {
 		} else {
 			warn!("Loading key for {}", host);
 			let key = self
-				.command_on("host", "cat", false)
+				.command_on(&host, "cat", false)
 				.arg("/etc/ssh/ssh_host_ed25519_key.pub")
 				.run_string()?;
 			self.update_key(host, key.clone());

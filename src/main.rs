@@ -5,7 +5,6 @@ pub mod host;
 pub mod keys;
 
 pub mod cmds;
-pub mod db;
 pub mod nix;
 
 mod fleetdata;
@@ -13,14 +12,12 @@ mod fleetdata;
 use anyhow::Result;
 use clap::Clap;
 
-use cmds::{build_systems::BuildSystems, generate_secrets::GenerateSecrets, secrets::Secrets};
+use cmds::{build_systems::BuildSystems, secrets::Secrets};
 use host::{Config, FleetOpts};
 
 #[derive(Clap)]
 #[clap(version = "1.0", author = "CertainLach <iam@lach.pw>")]
 enum Opts {
-	/// Force generation of missing secrets
-	GenerateSecrets(GenerateSecrets),
 	/// Prepare systems for deployments
 	BuildSystems(BuildSystems),
 	/// Secret management
@@ -38,7 +35,6 @@ struct RootOpts {
 fn run_command(config: &Config, command: Opts) -> Result<()> {
 	match command {
 		Opts::BuildSystems(c) => c.run(config)?,
-		Opts::GenerateSecrets(c) => c.run()?,
 		Opts::Secrets(s) => s.run(config)?,
 	};
 	Ok(())
