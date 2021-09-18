@@ -4,13 +4,19 @@ use anyhow::Result;
 use clap::Clap;
 use log::info;
 
-use crate::db::{
-	secret::{list_secrets, SecretDb},
-	Db, DbData,
+use crate::{
+	db::{
+		secret::{list_secrets, SecretDb},
+		Db, DbData,
+	},
+	host::FleetOpts,
 };
 
 #[derive(Clap)]
 pub struct GenerateSecrets {
+	#[clap(flatten)]
+	fleet_opts: FleetOpts,
+
 	/// If set - remove orphaned secrets
 	#[clap(long)]
 	cleanup: bool,
@@ -23,8 +29,8 @@ impl GenerateSecrets {
 
 		let defined_secrets = list_secrets()?;
 		for (secret, data) in defined_secrets.iter() {
-			// let keys = KeyDb::open(&db)?;
-			// secrets.ensure_generated(&keys, &secret, &data)?;
+			//let keys = KeyDb::open(&db)?;
+			secrets.ensure_generated(&self.fleet_opts, secret, data)?;
 		}
 		let key_names = defined_secrets
 			.keys()

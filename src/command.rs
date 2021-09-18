@@ -23,14 +23,14 @@ impl CommandExt for Command {
 	fn run(&mut self) -> Result<()> {
 		let out = self.output()?;
 		if !out.status.success() {
-			anyhow::bail!("command failed");
+			anyhow::bail!("command failed with status {}", out.status);
 		}
 		Ok(())
 	}
 
 	fn run_json<T: DeserializeOwned>(&mut self) -> Result<T> {
 		let str = self.run_string()?;
-		Ok(serde_json::from_str(&str).with_context(|| format!("{:?}", str))?)
+		serde_json::from_str(&str).with_context(|| format!("{:?}", str))
 	}
 
 	fn run_string(&mut self) -> Result<String> {

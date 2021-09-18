@@ -1,20 +1,13 @@
 use std::process::Command;
 
-use crate::{
-	command::CommandExt,
-	db::{secret::SecretDb, Db, DbData},
-	host::FleetOpts,
-	nix::SYSTEMS_ATTRIBUTE,
-};
+use crate::{command::CommandExt, host::Config, nix::SYSTEMS_ATTRIBUTE};
 use anyhow::Result;
 use clap::Clap;
-use log::{info, warn};
+use log::info;
 
 #[derive(Clap)]
 #[clap(group = clap::ArgGroup::new("target"))]
 pub struct BuildSystems {
-	#[clap(flatten)]
-	fleet_opts: FleetOpts,
 	/// --builders arg for nix
 	#[clap(long)]
 	builders: Option<String>,
@@ -53,18 +46,18 @@ impl Subcommand {
 }
 
 impl BuildSystems {
-	pub fn run(self) -> Result<()> {
-		let fleet = self.fleet_opts.build()?;
-		let db = Db::new(".fleet")?;
-		let hosts = fleet.list_hosts()?;
-		let data = SecretDb::open(&db)?.generate_nix_data()?;
+	pub fn run(self, config: &Config) -> Result<()> {
+		println!("Build");
+		// let db = Db::new(".fleet")?;
+		let hosts = config.list_hosts()?;
+		dbg!(&hosts);
+		// let data = SecretDb::open(&db)?.generate_nix_data()?;
 
 		for host in hosts.iter() {
-			if host.skip() {
-				warn!("Skipping host {}", host.hostname);
+			if config.should_skip(host) {
 				continue;
 			}
-			info!("Building host {}", host.hostname);
+			info!("Building host {}", host);
 			let built = {
 				let dir = tempfile::tempdir()?;
 				dir.path().to_owned()
@@ -82,9 +75,9 @@ impl BuildSystems {
 				.arg(&built)
 				.arg(format!(
 					"{}.{}.config.system.build.toplevel",
-					SYSTEMS_ATTRIBUTE, host.hostname,
-				))
-				.env("SECRET_DATA", data.clone());
+					SYSTEMS_ATTRIBUTE, host,
+				));
+			// .env("SECRET_DATA", data.clone());
 
 			if let Some(builders) = &self.builders {
 				println!("Using builders: {}", builders);
@@ -101,11 +94,11 @@ impl BuildSystems {
 			nix_build.inherit_stdio().run()?;
 			let built = std::fs::canonicalize(built)?;
 			info!("Built closure: {:?}", built);
-			if !host.is_local() {
+			if !config.is_local(host) {
 				info!("Uploading system closure");
 				Command::new("nix")
 					.args(&["copy", "--to"])
-					.arg(format!("ssh://root@{}", host.hostname))
+					.arg(format!("ssh://root@{}", host))
 					.arg(&built)
 					.inherit_stdio()
 					.run()?;
@@ -113,18 +106,20 @@ impl BuildSystems {
 			if let Some(subcommand) = &self.subcommand {
 				if subcommand.should_switch_profile() {
 					info!("Switching generation");
-					host.command_on("nix-env", true)
+					dbg!(&mut config
+						.command_on(host, "nix-env", true)
 						.args(&["-p", "/nix/var/nix/profiles/system", "--set"])
 						.arg(&built)
-						.inherit_stdio()
-						.run()?;
+						.inherit_stdio())
+					.run()?;
 				}
 				info!("Executing activation script");
 				let mut switch_script = built.clone();
 				switch_script.push("bin");
 				switch_script.push("switch-to-configuration");
 				info!("{:?}", switch_script);
-				host.command_on(switch_script, true)
+				config
+					.command_on(host, switch_script, true)
 					.arg(subcommand.name())
 					.inherit_stdio()
 					.run()?;

@@ -1,4 +1,5 @@
 use std::{
+	cell::{Ref, RefCell, RefMut},
 	env::current_dir,
 	ffi::{OsStr, OsString},
 	ops::Deref,
@@ -10,17 +11,18 @@ use std::{
 use anyhow::Result;
 use clap::Clap;
 
-use crate::command::CommandExt;
+use crate::{command::CommandExt, fleetdata::FleetData};
 
 pub struct FleetConfigInternals {
 	pub directory: PathBuf,
 	pub opts: FleetOpts,
+	pub data: RefCell<FleetData>,
 }
 
 #[derive(Clone)]
-pub struct FleetConfig(Arc<FleetConfigInternals>);
+pub struct Config(Arc<FleetConfigInternals>);
 
-impl Deref for FleetConfig {
+impl Deref for Config {
 	type Target = FleetConfigInternals;
 
 	fn deref(&self) -> &Self::Target {
@@ -28,70 +30,71 @@ impl Deref for FleetConfig {
 	}
 }
 
-impl FleetConfig {
-	pub fn data_dir(&self) -> PathBuf {
-		let mut out = self.directory.clone();
-		out.push(".fleet");
-		out
+impl Config {
+	pub fn should_skip(&self, host: &str) -> bool {
+		if !self.opts.skip.is_empty() {
+			self.opts.skip.iter().any(|h| h as &str == host)
+		} else if !self.opts.only.is_empty() {
+			!self.opts.only.iter().any(|h| h as &str == host)
+		} else {
+			false
+		}
+	}
+	pub fn is_local(&self, host: &str) -> bool {
+		self.opts.localhost.as_ref().map(|s| s as &str) == Some(host)
+	}
+
+	pub fn command_on(&self, host: &str, program: impl AsRef<OsStr>, sudo: bool) -> Command {
+		if self.is_local(host) {
+			if sudo {
+				let mut cmd = Command::new("sudo");
+				cmd.arg(program);
+				cmd
+			} else {
+				Command::new(program)
+			}
+		} else {
+			let mut cmd = Command::new("ssh");
+			cmd.arg(host).arg("--");
+			if sudo {
+				cmd.arg("sudo");
+			}
+			cmd.arg(program);
+			cmd
+		}
 	}
 
 	pub fn full_attr_name(&self, attr_name: &str) -> OsString {
 		let mut str = self.directory.as_os_str().to_owned();
 		str.push("#");
 		str.push(attr_name);
+
+		println!("{:?}", str);
 		str
 	}
 
-	pub fn list_host_names(&self) -> Result<Vec<String>> {
-		Ok(Command::new("nix")
+	pub fn list_hosts(&self) -> Result<Vec<String>> {
+		Command::new("nix")
 			.arg("eval")
 			.arg(self.full_attr_name("fleetConfigurations.default.configuredHosts"))
-			.args(&["--apply", "builtins.attrNames", "--json"])
+			.args(&["--apply", "builtins.attrNames", "--json", "--show-trace"])
 			.inherit_stdio()
-			.run_json()?)
+			.run_json()
 	}
 
-	pub fn list_hosts(&self) -> Result<Vec<Host>> {
-		Ok(self
-			.list_host_names()?
-			.into_iter()
-			.map(|hostname| Host {
-				fleet_config: self.clone(),
-				hostname,
-			})
-			.collect())
+	pub fn data(&self) -> Ref<FleetData> {
+		self.data.borrow()
 	}
-}
-
-pub struct Host {
-	pub fleet_config: FleetConfig,
-
-	pub hostname: String,
-}
-
-impl Host {
-	pub fn skip(&self) -> bool {
-		self.fleet_config.0.opts.should_skip(&self.hostname)
+	pub fn data_mut(&self) -> RefMut<FleetData> {
+		self.data.borrow_mut()
 	}
-	pub fn is_local(&self) -> bool {
-		self.fleet_config.0.opts.is_local(&self.hostname)
-	}
-	pub fn command_on(&self, cmd: impl AsRef<OsStr>, sudo: bool) -> Command {
-		if !self.is_local() {
-			let mut out = Command::new("ssh");
-			out.arg(&self.hostname).arg("--");
-			if sudo {
-				out.arg("sudo");
-			}
-			out.arg(cmd);
-			out
-		} else if sudo {
-			let mut out = Command::new("sudo");
-			out.arg(cmd);
-			out
-		} else {
-			Command::new(cmd)
-		}
+
+	pub fn save(&self) -> Result<()> {
+		let mut fleet_data_path = self.directory.clone();
+		fleet_data_path.push("fleet.nix");
+		let data = nixlike::serialize(&self.data() as &FleetData)?;
+		std::fs::write(fleet_data_path, data)?;
+		Ok(())
 	}
 }
 
@@ -112,27 +115,22 @@ pub struct FleetOpts {
 }
 
 impl FleetOpts {
-	pub fn should_skip(&self, host: &str) -> bool {
-		if self.skip.len() > 0 {
-			self.skip.iter().find(|h| h as &str == host).is_some()
-		} else if self.only.len() > 0 {
-			self.only.iter().find(|h| h as &str == host).is_none()
-		} else {
-			false
-		}
-	}
-	pub fn is_local(&self, host: &str) -> bool {
-		self.localhost.as_ref().map(|s| &s as &str) == Some(host)
-	}
-	pub fn build(mut self) -> Result<FleetConfig> {
+	pub fn build(mut self) -> Result<Config> {
 		if self.localhost.is_none() {
 			self.localhost
 				.replace(hostname::get().unwrap().to_str().unwrap().to_owned());
 		}
 		let directory = current_dir()?;
-		Ok(FleetConfig(Arc::new(FleetConfigInternals {
+
+		let mut fleet_data_path = directory.clone();
+		fleet_data_path.push("fleet.nix");
+		let bytes = std::fs::read_to_string(fleet_data_path)?;
+		let data = nixlike::parse_str(&bytes)?;
+
+		Ok(Config(Arc::new(FleetConfigInternals {
 			opts: self,
 			directory,
+			data,
 		})))
 	}
 }

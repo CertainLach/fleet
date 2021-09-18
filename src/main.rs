@@ -8,9 +8,13 @@ pub mod cmds;
 pub mod db;
 pub mod nix;
 
+mod fleetdata;
+
 use anyhow::Result;
 use clap::Clap;
-use cmds::{build_systems::BuildSystems, fetch_keys::FetchKeys, generate_secrets::GenerateSecrets};
+
+use cmds::{build_systems::BuildSystems, generate_secrets::GenerateSecrets, secrets::Secrets};
+use host::{Config, FleetOpts};
 
 #[derive(Clap)]
 #[clap(version = "1.0", author = "CertainLach <iam@lach.pw>")]
@@ -23,16 +27,38 @@ enum Opts {
 	Secrets(Secrets),
 }
 
+#[derive(Clap)]
+struct RootOpts {
+	#[clap(flatten)]
+	fleet_opts: FleetOpts,
+	#[clap(subcommand)]
+	command: Opts,
+}
+
+fn run_command(config: &Config, command: Opts) -> Result<()> {
+	match command {
+		Opts::BuildSystems(c) => c.run(config)?,
+		Opts::GenerateSecrets(c) => c.run()?,
+		Opts::Secrets(s) => s.run(config)?,
+	};
+	Ok(())
+}
+
 fn main() -> Result<()> {
 	env_logger::Builder::new()
 		.filter_level(log::LevelFilter::Info)
 		.init();
-	let opts = Opts::parse();
+	let opts = RootOpts::parse();
+	let config = opts.fleet_opts.build()?;
 
-	match opts {
-		Opts::FetchKeys(c) => c.run()?,
-		Opts::BuildSystems(c) => c.run()?,
-		Opts::GenerateSecrets(c) => c.run()?,
-	};
-	Ok(())
+	match run_command(&config, opts.command) {
+		Ok(()) => {
+			config.save()?;
+			Ok(())
+		}
+		Err(e) => {
+			let _ = config.save();
+			Err(e)
+		}
+	}
 }
