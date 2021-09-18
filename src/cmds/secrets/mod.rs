@@ -56,14 +56,15 @@ impl Secrets {
 					let mut encryptor =
 						age::Encryptor::with_recipients(recipients).wrap_output(&mut encrypted)?;
 					io::copy(&mut Cursor::new(input), &mut encryptor)?;
-					ascii85::encode(&encrypted)
+					encryptor.finish()?;
+					encrypted
 				};
 
 				let mut data = config.data_mut();
-				if data.secret.contains_key(&name) && !force {
+				if data.secrets.contains_key(&name) && !force {
 					bail!("secret already defined");
 				}
-				data.secret.insert(
+				data.secrets.insert(
 					name,
 					FleetSecret {
 						owners: machines,

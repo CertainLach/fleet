@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
 
 #[derive(Serialize, Deserialize, Default)]
@@ -16,7 +16,7 @@ pub struct FleetData {
 	pub hosts: BTreeMap<String, HostData>,
 	#[serde(default)]
 	#[serde(skip_serializing_if = "BTreeMap::is_empty")]
-	pub secret: BTreeMap<String, FleetSecret>,
+	pub secrets: BTreeMap<String, FleetSecret>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -28,5 +28,22 @@ pub struct FleetSecret {
 	pub expire_at: Option<DateTime<Utc>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub public: Option<String>,
-	pub secret: String,
+	#[serde(serialize_with = "as_z85", deserialize_with = "from_z85")]
+	pub secret: Vec<u8>,
+}
+
+fn as_z85<S>(key: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+where
+	S: Serializer,
+{
+	serializer.serialize_str(&z85::encode(&key))
+}
+
+fn from_z85<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+	D: Deserializer<'de>,
+{
+	use serde::de::Error;
+	String::deserialize(deserializer)
+		.and_then(|string| z85::decode(&string).map_err(|err| Error::custom(err.to_string())))
 }

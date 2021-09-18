@@ -68,8 +68,6 @@ impl Config {
 		let mut str = self.directory.as_os_str().to_owned();
 		str.push("#");
 		str.push(attr_name);
-
-		println!("{:?}", str);
 		str
 	}
 

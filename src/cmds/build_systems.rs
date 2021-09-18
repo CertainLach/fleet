@@ -47,7 +47,6 @@ impl Subcommand {
 
 impl BuildSystems {
 	pub fn run(self, config: &Config) -> Result<()> {
-		println!("Build");
 		let hosts = config.list_hosts()?;
 
 		for host in hosts.iter() {
@@ -76,7 +75,6 @@ impl BuildSystems {
 				));
 
 			if let Some(builders) = &self.builders {
-				println!("Using builders: {}", builders);
 				nix_build.arg("--builders").arg(builders);
 			}
 			if let Some(jobs) = &self.jobs {
