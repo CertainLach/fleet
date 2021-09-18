@@ -48,10 +48,7 @@ impl Subcommand {
 impl BuildSystems {
 	pub fn run(self, config: &Config) -> Result<()> {
 		println!("Build");
-		// let db = Db::new(".fleet")?;
 		let hosts = config.list_hosts()?;
-		dbg!(&hosts);
-		// let data = SecretDb::open(&db)?.generate_nix_data()?;
 
 		for host in hosts.iter() {
 			if config.should_skip(host) {
@@ -77,7 +74,6 @@ impl BuildSystems {
 					"{}.{}.config.system.build.toplevel",
 					SYSTEMS_ATTRIBUTE, host,
 				));
-			// .env("SECRET_DATA", data.clone());
 
 			if let Some(builders) = &self.builders {
 				println!("Using builders: {}", builders);
@@ -106,18 +102,17 @@ impl BuildSystems {
 			if let Some(subcommand) = &self.subcommand {
 				if subcommand.should_switch_profile() {
 					info!("Switching generation");
-					dbg!(&mut config
+					config
 						.command_on(host, "nix-env", true)
 						.args(&["-p", "/nix/var/nix/profiles/system", "--set"])
 						.arg(&built)
-						.inherit_stdio())
-					.run()?;
+						.inherit_stdio()
+						.run()?;
 				}
 				info!("Executing activation script");
 				let mut switch_script = built.clone();
 				switch_script.push("bin");
 				switch_script.push("switch-to-configuration");
-				info!("{:?}", switch_script);
 				config
 					.command_on(host, switch_script, true)
 					.arg(subcommand.name())
