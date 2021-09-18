@@ -15,12 +15,12 @@ use cmds::{build_systems::BuildSystems, fetch_keys::FetchKeys, generate_secrets:
 #[derive(Clap)]
 #[clap(version = "1.0", author = "CertainLach <iam@lach.pw>")]
 enum Opts {
-	/// Fetch encryption (ssh) public keys from remote hosts
-	FetchKeys(FetchKeys),
 	/// Force generation of missing secrets
 	GenerateSecrets(GenerateSecrets),
 	/// Prepare systems for deployments
 	BuildSystems(BuildSystems),
+	/// Secret management
+	Secrets(Secrets),
 }
 
 fn main() -> Result<()> {
