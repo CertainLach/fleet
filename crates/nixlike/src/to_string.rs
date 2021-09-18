@@ -41,7 +41,7 @@ fn write_nix_buf(value: &Value, out: &mut PrintItems) {
 				out.push_signal(Signal::StartIndent);
 				out.push_condition(conditions::if_true_or(
 					"array start",
-					is_multiple_lines.clone(),
+					is_multiple_lines,
 					Signal::NewLine.into(),
 					Signal::SpaceOrNewLine.into(),
 				));
@@ -49,7 +49,7 @@ fn write_nix_buf(value: &Value, out: &mut PrintItems) {
 					write_nix_buf(item, out);
 					out.push_condition(conditions::if_true_or(
 						"element separator",
-						is_multiple_lines.clone(),
+						is_multiple_lines,
 						Signal::NewLine.into(),
 						Signal::SpaceOrNewLine.into(),
 					));
@@ -73,7 +73,7 @@ fn write_nix_buf(value: &Value, out: &mut PrintItems) {
 				out.push_signal(Signal::StartIndent);
 				out.push_condition(conditions::if_true_or(
 					"object start",
-					is_multiple_lines.clone(),
+					is_multiple_lines,
 					Signal::NewLine.into(),
 					Signal::SpaceOrNewLine.into(),
 				));
@@ -81,7 +81,7 @@ fn write_nix_buf(value: &Value, out: &mut PrintItems) {
 					write_nix_obj_key_buf(k, v, out);
 					out.push_condition(conditions::if_true_or(
 						"element separator",
-						is_multiple_lines.clone(),
+						is_multiple_lines,
 						Signal::NewLine.into(),
 						Signal::SpaceOrNewLine.into(),
 					));

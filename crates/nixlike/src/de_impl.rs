@@ -1,8 +1,6 @@
-use std::{
-	collections::BTreeMap,
-	convert::{TryFrom, TryInto},
-};
+use std::convert::{TryFrom, TryInto};
 
+use linked_hash_map::LinkedHashMap;
 use serde::{
 	de::{self, MapAccess, SeqAccess},
 	Deserializer,
@@ -11,11 +9,11 @@ use serde::{
 use crate::{Error, Value};
 
 struct ObjectAccess {
-	iter: std::collections::btree_map::IntoIter<String, Value>,
+	iter: linked_hash_map::IntoIter<String, Value>,
 	value: Option<Value>,
 }
 impl ObjectAccess {
-	fn new(v: BTreeMap<String, Value>) -> Self {
+	fn new(v: LinkedHashMap<String, Value>) -> Self {
 		Self {
 			iter: v.into_iter(),
 			value: None,
@@ -103,7 +101,7 @@ impl Value {
 			_ => Err(Error::Expected("array")),
 		}
 	}
-	fn parse_object(self) -> Result<BTreeMap<String, Value>, Error> {
+	fn parse_object(self) -> Result<LinkedHashMap<String, Value>, Error> {
 		match self {
 			Value::Object(s) => Ok(s),
 			_ => Err(Error::Expected("object")),

@@ -1,5 +1,4 @@
-use std::collections::BTreeMap;
-
+use linked_hash_map::LinkedHashMap;
 use peg::str::LineCol;
 use se_impl::MySerialize;
 use serde::{Deserialize, Serialize};
@@ -29,7 +28,7 @@ pub enum Value {
 	Number(i64),
 	String(String),
 	Boolean(bool),
-	Object(BTreeMap<String, Value>),
+	Object(LinkedHashMap<String, Value>),
 	Array(Vec<Value>),
 	Null,
 }
@@ -49,11 +48,11 @@ pub grammar nixlike() for str {
 		/ "false" {false} } / expected!("<boolean>")
 	rule indent() -> String
 		= quiet! { s:$(['a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-']+) { s.to_owned() } } / expected!("<identifier>")
-	rule object() -> BTreeMap<String, Value>
+	rule object() -> LinkedHashMap<String, Value>
 		= "{" _
 			e:(k:indent()++(_ "." _) _ "=" _ v:value() _ ";" _ {(k, v)})*
 		"}" {?
-			let mut out = BTreeMap::new();
+			let mut out = LinkedHashMap::new();
 			for (k, v) in e {
 				let mut map = &mut out;
 				for v in k.iter().take(k.len() - 1) {

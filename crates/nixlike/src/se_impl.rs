@@ -1,5 +1,6 @@
-use std::{collections::BTreeMap, convert::TryInto};
+use std::convert::TryInto;
 
+use linked_hash_map::LinkedHashMap;
 use serde::{
 	ser::{
 		self, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple,
@@ -96,7 +97,7 @@ impl SerializeTupleVariant for MySerializeSeqVariant {
 	}
 }
 
-pub struct MySerializeMap(BTreeMap<String, Value>, Option<String>);
+pub struct MySerializeMap(LinkedHashMap<String, Value>, Option<String>);
 
 impl SerializeMap for MySerializeMap {
 	type Ok = Value;
@@ -127,7 +128,7 @@ impl SerializeMap for MySerializeMap {
 	}
 }
 
-pub struct MySerializeStruct(BTreeMap<String, Value>);
+pub struct MySerializeStruct(LinkedHashMap<String, Value>);
 
 impl SerializeStruct for MySerializeStruct {
 	type Ok = Value;
@@ -147,7 +148,7 @@ impl SerializeStruct for MySerializeStruct {
 	}
 }
 
-pub struct MySerializeStructVariant(String, BTreeMap<String, Value>);
+pub struct MySerializeStructVariant(String, LinkedHashMap<String, Value>);
 
 impl SerializeStructVariant for MySerializeStructVariant {
 	type Ok = Value;
@@ -336,7 +337,7 @@ impl Serializer for MySerialize {
 	}
 
 	fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-		Ok(MySerializeMap(BTreeMap::new(), None))
+		Ok(MySerializeMap(LinkedHashMap::new(), None))
 	}
 
 	fn serialize_struct(
@@ -344,7 +345,7 @@ impl Serializer for MySerialize {
 		_name: &'static str,
 		_len: usize,
 	) -> Result<Self::SerializeStruct, Self::Error> {
-		Ok(MySerializeStruct(BTreeMap::new()))
+		Ok(MySerializeStruct(LinkedHashMap::new()))
 	}
 
 	fn serialize_struct_variant(
@@ -356,7 +357,7 @@ impl Serializer for MySerialize {
 	) -> Result<Self::SerializeStructVariant, Self::Error> {
 		Ok(MySerializeStructVariant(
 			variant.to_owned(),
-			BTreeMap::new(),
+			LinkedHashMap::new(),
 		))
 	}
 }
