@@ -39,7 +39,7 @@ impl Db {
 
 	pub fn db<T: DbData>(&self) -> Result<DbFile<T>> {
 		let name = T::DB_NAME;
-		assert!(!name.contains("/") && !name.contains("\\"));
+		assert!(!name.contains('/') && !name.contains('\\'));
 		let mut db = self.0.lock().unwrap();
 		let mut data_path = db.root.clone();
 		data_path.push(format!("{}.toml", name));
@@ -101,7 +101,7 @@ impl<T: DbData> DbFile<T> {
 		let mut serializer = toml::Serializer::new(&mut out);
 		serializer.pretty_array(true).pretty_string(true);
 		self.data.serialize(&mut serializer)?;
-		temp.write_all(&out.as_bytes())?;
+		temp.write_all(out.as_bytes())?;
 		temp.persist(&self.path)?;
 		self.dirty.set(false);
 		Ok(())

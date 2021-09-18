@@ -1,5 +1,5 @@
-use crate::{command::CommandExt, host::FleetConfig, nix::SECRETS_ATTRIBUTE};
-use anyhow::{bail, Result};
+use crate::{command::CommandExt, host::FleetOpts, nix::SECRETS_ATTRIBUTE};
+use anyhow::{bail, Context, Result};
 use log::info;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -10,7 +10,7 @@ use std::{
 };
 use time::{Duration, PrimitiveDateTime};
 
-use super::db::DbData;
+use super::DbData;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SecretListData {
@@ -31,7 +31,9 @@ pub fn list_secrets() -> Result<HashMap<String, SecretListData>> {
 				}) s)
 			"#,
 		)
+		.arg("--json")
 		.run_json()
+		.context("while getting secret list")
 }
 
 struct ReadableDate(PrimitiveDateTime);
@@ -109,17 +111,18 @@ impl SecretDb {
 	// Secrets are generated on machine running fleet command
 	pub fn generate_secret(
 		&mut self,
-		fleet_config: FleetConfig,
+		_fleet_config: &FleetOpts,
 		secret: &str,
 		data: &SecretListData,
 	) -> Result<()> {
 		let mut rage_keys = String::new();
-		for (i, owner) in data.owners.iter().enumerate() {
+		for (i, _owner) in data.owners.iter().enumerate() {
 			if i != 0 {
 				rage_keys.push(' ');
 			}
 			rage_keys.push_str("--recipient \"");
-			// rage_keys.push_str(&keys.get_host_key(&owner)?);
+			// rage_keys.push_str(&fleet_config.clone().build()?.host(owner)?.key()?);
+			//rage_keys.push_str(&keys.get_host_key(&owner)?);
 			rage_keys.push('"')
 		}
 		let created_at: PrimitiveDateTime = SystemTime::now().into();
@@ -154,7 +157,7 @@ impl SecretDb {
 			let name = entry.file_name();
 			let name = name
 				.to_str()
-				.ok_or(anyhow::anyhow!("file name should be utf-8"))?;
+				.ok_or_else(|| anyhow::anyhow!("file name should be utf-8"))?;
 			let value = String::from_utf8(std::fs::read(entry.path())?)?;
 			if let Some(name) = name.strip_prefix("pub_") {
 				secret_data.public_data.insert(name.into(), value);
@@ -176,7 +179,7 @@ impl SecretDb {
 			return Ok(true);
 		}
 
-		if !secret.is_valid(&data) {
+		if !secret.is_valid(data) {
 			return Ok(true);
 		}
 
@@ -185,12 +188,13 @@ impl SecretDb {
 	pub fn ensure_generated(
 		&mut self,
 		// keys: &KeyDb,
+		fleet_config: &FleetOpts,
 		secret: &str,
 		data: &SecretListData,
 	) -> Result<()> {
 		if self.need_to_generate(secret, data)? {
 			info!("Generating secret {}", secret);
-			// self.generate_secret(keys, secret, data)?;
+			self.generate_secret(fleet_config, secret, data)?;
 		}
 
 		Ok(())
