@@ -1,10 +1,7 @@
 use crate::{fleetdata::FleetSecret, host::Config};
 use anyhow::{bail, Result};
 use clap::Clap;
-use std::{
-	collections::BTreeMap,
-	io::{Cursor, Read},
-};
+use std::io::{self, Cursor, Read};
 
 #[derive(Clap)]
 pub enum Secrets {
@@ -19,6 +16,8 @@ pub enum Secrets {
 		/// Override secret if already present
 		#[clap(long)]
 		force: bool,
+		#[clap(long)]
+		public: Option<String>,
 	},
 }
 
@@ -37,51 +36,40 @@ impl Secrets {
 				machines,
 				name,
 				force,
+				public,
 			} => {
 				let recipients = machines
 					.iter()
-					.map(|m| config.recipient(&m))
+					.map(|m| config.recipient(m))
 					.collect::<Result<Vec<_>>>()?;
 
-				let secret_data = {
+				let secret = {
 					let mut input = vec![];
-					std::io::stdin().read_to_end(&mut input)?;
+					io::stdin().read_to_end(&mut input)?;
 
-					let data: BTreeMap<String, String> = serde_json::from_slice(&input)?;
-					let mut transformed_data: BTreeMap<String, String> = BTreeMap::new();
-					for (k, v) in data {
-						if k.ends_with("_pub") {
-							transformed_data.insert(k, v);
-						} else if k.ends_with("_secret") {
-							let mut encrypted = vec![];
-							let recipients = recipients
-								.iter()
-								.cloned()
-								.map(|r| Box::new(r) as Box<dyn age::Recipient>)
-								.collect();
-							let mut encryptor = age::Encryptor::with_recipients(recipients)
-								.wrap_output(&mut encrypted)?;
-							std::io::copy(&mut Cursor::new(v.as_bytes()), &mut encryptor)?;
-							drop(encryptor);
-
-							transformed_data.insert(k, ascii85::encode(&encrypted));
-						} else {
-							bail!("unknown key type: {:?}", k);
-						}
-					}
-					transformed_data
+					let mut encrypted = vec![];
+					let recipients = recipients
+						.iter()
+						.cloned()
+						.map(|r| Box::new(r) as Box<dyn age::Recipient>)
+						.collect();
+					let mut encryptor =
+						age::Encryptor::with_recipients(recipients).wrap_output(&mut encrypted)?;
+					io::copy(&mut Cursor::new(input), &mut encryptor)?;
+					ascii85::encode(&encrypted)
 				};
 
 				let mut data = config.data_mut();
-				if data.secrets.contains_key(&name) && !force {
+				if data.secret.contains_key(&name) && !force {
 					bail!("secret already defined");
 				}
-				data.secrets.insert(
+				data.secret.insert(
 					name,
 					FleetSecret {
-						owners: machines.clone(),
+						owners: machines,
 						expire_at: None,
-						data: secret_data,
+						secret,
+						public,
 					},
 				);
 			}

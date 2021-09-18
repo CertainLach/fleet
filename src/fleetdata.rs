@@ -16,7 +16,7 @@ pub struct FleetData {
 	pub hosts: BTreeMap<String, HostData>,
 	#[serde(default)]
 	#[serde(skip_serializing_if = "BTreeMap::is_empty")]
-	pub secrets: BTreeMap<String, FleetSecret>,
+	pub secret: BTreeMap<String, FleetSecret>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -26,5 +26,7 @@ pub struct FleetSecret {
 	#[serde(default)]
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub expire_at: Option<DateTime<Utc>>,
-	pub data: BTreeMap<String, String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub public: Option<String>,
+	pub secret: String,
 }

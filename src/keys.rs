@@ -27,7 +27,7 @@ impl Config {
 		} else {
 			warn!("Loading key for {}", host);
 			let key = self
-				.command_on(&host, "cat", false)
+				.command_on(host, "cat", false)
 				.arg("/etc/ssh/ssh_host_ed25519_key.pub")
 				.run_string()?;
 			self.update_key(host, key.clone());
