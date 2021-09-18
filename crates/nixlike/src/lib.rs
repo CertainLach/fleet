@@ -75,6 +75,7 @@ pub grammar nixlike() for str {
 		= o:object() { Value::Object(o) }
 		/ a:array() { Value::Array(a) }
 		/ s:string() { Value::String(s) }
+		/ "null" { Value::Null }
 		/ b:boolean() { Value::Boolean(b) }
 		/ n:number() { Value::Number(n) }
 
