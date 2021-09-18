@@ -82,7 +82,8 @@ pub grammar nixlike() for str {
 		= _ v:value() _ { v }
 
 	rule _()
-		= [' ' | '\t' | '\n']*
+		= ( quiet!{ [' ' | '\t' | '\n']+ }
+		/ "#" (!['\n'] [_])* "\n" )*
 }
 }
 
