@@ -93,7 +93,13 @@ impl Config {
 		let mut fleet_data_path = self.directory.clone();
 		fleet_data_path.push("fleet.nix");
 		let data = nixlike::serialize(&self.data() as &FleetData)?;
-		std::fs::write(fleet_data_path, data)?;
+		std::fs::write(
+			fleet_data_path,
+			format!(
+				"# This file contains fleet state and shouldn't be edited by hand\n\n{}\n",
+				data
+			),
+		)?;
 		Ok(())
 	}
 }
