@@ -101,13 +101,13 @@ pub fn parse_value<'de, D: Deserialize<'de>>(value: Value) -> Result<D, Error> {
 	D::deserialize(value)
 }
 
-pub fn serialize_value_pretty(value: Value) -> Result<String, Error> {
+pub fn serialize_value_pretty(value: Value) -> String {
 	to_string::write_nix(&value)
 }
 
 pub fn serialize<S: Serialize>(value: S) -> Result<String, Error> {
 	let value: Value = value.serialize(MySerialize)?;
-	serialize_value_pretty(value)
+	Ok(serialize_value_pretty(value))
 }
 
 #[test]
