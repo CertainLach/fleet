@@ -1,4 +1,5 @@
-[
-  ./networking/wireguard
-  ./root.nix
+{ data }: [
+  ./hosts.nix
+  ./secrets
+  data
 ]

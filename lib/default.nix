@@ -1,29 +1,11 @@
 {
-  fleetConfiguration = { nixpkgs, hosts, ... }@allConfig:
+  fleetConfiguration = { data, nixpkgs, hosts, ... }@allConfig:
     let
-      config = builtins.removeAttrs allConfig [ "nixpkgs" ];
+      config = builtins.removeAttrs allConfig [ "nixpkgs" "data" ];
     in
     rec {
       root = nixpkgs.lib.evalModules {
-        modules =
-          (import ../modules/modules.nix) ++ [
-            config
-            (
-              { ... }: {
-                options = { };
-                config = {
-                  # Secret data is available only via fleet build-systems
-                  secrets =
-                    if builtins?getEnv then
-                      let
-                        stringData = builtins.getEnv "SECRET_DATA";
-                      in
-                      if stringData != "" then (builtins.fromJSON stringData) else { }
-                    else { };
-                };
-              }
-            )
-          ];
+        modules = (import ../modules/modules.nix { inherit data; }) ++ [ config ];
         specialArgs = {
           inherit nixpkgs;
           fleet = import ./fleetLib.nix {
