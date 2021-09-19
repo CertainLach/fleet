@@ -127,8 +127,7 @@ fn main() -> anyhow::Result<()> {
 	let data_str = from_utf8(&data).context("failed to read data to string")?;
 	let data: Data = serde_json::from_str(data_str).context("failed to parse data")?;
 
-	let tempdir =
-		tempfile::tempdir_in("/run/secrets.d").context("failed to create secrets tempdir")?;
+	let tempdir = tempfile::tempdir_in("/run/").context("failed to create secrets tempdir")?;
 
 	let identity = age::ssh::Identity::from_buffer(
 		&mut Cursor::new(
@@ -152,7 +151,7 @@ fn main() -> anyhow::Result<()> {
 		bail!("one or more secrets failed");
 	}
 
-	if fs::metadata("/run/secrets.d/secrets.fleet")
+	if fs::metadata("/run/secrets")
 		.map(|m| m.is_dir())
 		.unwrap_or(false)
 	{
@@ -161,7 +160,7 @@ fn main() -> anyhow::Result<()> {
 			None,
 			tempdir.path(),
 			None,
-			"/run/secrets.d/secrets.fleet",
+			"/run/secrets",
 			RenameFlags::RENAME_EXCHANGE,
 		)
 		.context("failed to exchange secret directories")?;
@@ -171,8 +170,7 @@ fn main() -> anyhow::Result<()> {
 	} else {
 		// Link now
 		let persisted = tempdir.into_path();
-		fs::rename(&persisted, "/run/secrets.d/secrets.fleet")
-			.context("failed to link secret directory")?;
+		fs::rename(&persisted, "/run/secrets").context("failed to link secret directory")?;
 	}
 	Ok(())
 }
