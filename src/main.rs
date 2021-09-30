@@ -8,13 +8,13 @@ pub mod nix;
 mod fleetdata;
 
 use anyhow::Result;
-use clap::Clap;
+use structopt::StructOpt;
 
 use cmds::{build_systems::BuildSystems, secrets::Secrets};
 use host::{Config, FleetOpts};
 
-#[derive(Clap)]
-#[clap(version = "1.0", author = "CertainLach <iam@lach.pw>")]
+#[derive(StructOpt)]
+#[structopt(version = "1.0", author = "CertainLach <iam@lach.pw>")]
 enum Opts {
 	/// Prepare systems for deployments
 	BuildSystems(BuildSystems),
@@ -22,11 +22,11 @@ enum Opts {
 	Secrets(Secrets),
 }
 
-#[derive(Clap)]
+#[derive(StructOpt)]
 struct RootOpts {
-	#[clap(flatten)]
+	#[structopt(flatten)]
 	fleet_opts: FleetOpts,
-	#[clap(subcommand)]
+	#[structopt(subcommand)]
 	command: Opts,
 }
 
@@ -42,7 +42,7 @@ fn main() -> Result<()> {
 	env_logger::Builder::new()
 		.filter_level(log::LevelFilter::Info)
 		.init();
-	let opts = RootOpts::parse();
+	let opts = RootOpts::from_args();
 	let config = opts.fleet_opts.build()?;
 
 	match run_command(&config, opts.command) {

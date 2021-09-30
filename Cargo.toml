@@ -7,7 +7,6 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0"
-clap = { version = "3.0.0-beta.2", features = ["derive", "suggestions", "color"] }
 log = "0.4.14"
 env_logger = "0.9.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -23,6 +22,7 @@ age = { version = "0.6.0", features = ["ssh", "armor"] }
 base64 = "0.13.0"
 chrono = { version = "0.4.19", features = ["serde"] }
 z85 = "3.0.3"
+structopt = "0.3.23"
 
 [workspace]
 members = ["crates/nixlike", "cmds/install-secrets"]

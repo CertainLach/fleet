@@ -1,9 +1,9 @@
 use crate::{fleetdata::FleetSecret, host::Config};
 use anyhow::{bail, Result};
-use clap::Clap;
 use std::io::{self, Cursor, Read};
+use structopt::StructOpt;
 
-#[derive(Clap)]
+#[derive(StructOpt)]
 pub enum Secrets {
 	/// Force load keys for all defined hosts
 	ForceKeys,
@@ -14,9 +14,9 @@ pub enum Secrets {
 		/// Secret owners
 		machines: Vec<String>,
 		/// Override secret if already present
-		#[clap(long)]
+		#[structopt(long)]
 		force: bool,
-		#[clap(long)]
+		#[structopt(long)]
 		public: Option<String>,
 	},
 }

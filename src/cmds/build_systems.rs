@@ -2,28 +2,27 @@ use std::process::Command;
 
 use crate::{command::CommandExt, host::Config, nix::SYSTEMS_ATTRIBUTE};
 use anyhow::Result;
-use clap::Clap;
 use log::info;
+use structopt::StructOpt;
 
-#[derive(Clap)]
-#[clap(group = clap::ArgGroup::new("target"))]
+#[derive(StructOpt)]
 pub struct BuildSystems {
 	/// --builders arg for nix
-	#[clap(long)]
+	#[structopt(long)]
 	builders: Option<String>,
 	/// Jobs to run locally
-	#[clap(long)]
+	#[structopt(long)]
 	jobs: Option<usize>,
 	/// Do not continue on error
-	#[clap(long)]
+	#[structopt(long)]
 	fail_fast: bool,
-	#[clap(long)]
+	#[structopt(long)]
 	privileged_build: bool,
-	#[clap(subcommand)]
+	#[structopt(subcommand)]
 	subcommand: Option<Subcommand>,
 }
 
-#[derive(Clap)]
+#[derive(StructOpt)]
 enum Subcommand {
 	/// Switch to built system until reboot
 	Test,

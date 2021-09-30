@@ -9,7 +9,8 @@ use std::{
 };
 
 use anyhow::Result;
-use clap::Clap;
+use structopt::clap::ArgGroup;
+use structopt::StructOpt;
 
 use crate::{command::CommandExt, fleetdata::FleetData};
 
@@ -102,19 +103,19 @@ impl Config {
 	}
 }
 
-#[derive(Clap, Clone)]
-#[clap(group = clap::ArgGroup::new("target_hosts"))]
+#[derive(StructOpt, Clone)]
+#[structopt(group = ArgGroup::with_name("target_hosts"))]
 pub struct FleetOpts {
 	/// All hosts except those would be skipped
-	#[clap(long, number_of_values = 1, group = "target_hosts")]
+	#[structopt(long, number_of_values = 1, group = "target_hosts")]
 	only: Vec<String>,
 
 	/// Hosts to skip
-	#[clap(long, number_of_values = 1, group = "target_hosts")]
+	#[structopt(long, number_of_values = 1, group = "target_hosts")]
 	skip: Vec<String>,
 
 	/// Host, which should be threaten as current machine
-	#[clap(long)]
+	#[structopt(long)]
 	pub localhost: Option<String>,
 }
 
