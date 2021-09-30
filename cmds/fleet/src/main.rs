@@ -8,13 +8,13 @@ pub mod nix;
 mod fleetdata;
 
 use anyhow::Result;
+use structopt::clap::AppSettings::*;
 use structopt::StructOpt;
 
 use cmds::{build_systems::BuildSystems, secrets::Secrets};
 use host::{Config, FleetOpts};
 
 #[derive(StructOpt)]
-#[structopt(version = "1.0", author = "CertainLach <iam@lach.pw>")]
 enum Opts {
 	/// Prepare systems for deployments
 	BuildSystems(BuildSystems),
@@ -23,6 +23,12 @@ enum Opts {
 }
 
 #[derive(StructOpt)]
+#[structopt(
+	version = "1.0",
+	author,
+	global_setting(ColorAuto),
+	global_setting(ColoredHelp)
+)]
 struct RootOpts {
 	#[structopt(flatten)]
 	fleet_opts: FleetOpts,
