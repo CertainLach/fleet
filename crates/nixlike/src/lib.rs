@@ -43,7 +43,7 @@ pub grammar nixlike() for str {
 		/ "\\n" { "\n" }
 		/ "\\t" { "\t" }
 		/ "\\r" { "\r" }
-		/ "''$" { "$" }
+		/ "\\$" { "$" }
 		/ c:$([_]) { c }
 	rule string() -> String
 		= quiet! { "\"" v:(!"\"" c:string_char() {c})* "\"" { v.into_iter().collect() } } / expected!("<string>")

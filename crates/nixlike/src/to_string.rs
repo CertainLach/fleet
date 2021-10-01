@@ -39,7 +39,7 @@ fn write_nix_buf(value: &Value, out: &mut PrintItems) {
 				.replace('\n', "\\n")
 				.replace('\t', "\\t")
 				.replace('\r', "\\r")
-				.replace("$", "''$")
+				.replace("$", "\\$")
 		)),
 		Value::Array(a) => {
 			if a.is_empty() {
