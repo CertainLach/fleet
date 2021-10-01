@@ -5,7 +5,13 @@ use dprint_core::formatting::{
 };
 
 fn write_nix_obj_key_buf(k: &str, v: &Value, out: &mut PrintItems) {
-	out.push_str(k);
+	if k.contains(".") {
+		out.push_str("\"");
+		out.push_str(k);
+		out.push_str("\"");
+	} else {
+		out.push_str(k);
+	}
 	match v {
 		Value::Object(o) if o.len() == 1 => {
 			let (k, v) = o.iter().next().unwrap();
@@ -26,7 +32,15 @@ fn write_nix_buf(value: &Value, out: &mut PrintItems) {
 		Value::Null => out.push_str("null"),
 		Value::Boolean(v) => out.push_str(if *v { "true" } else { "false" }),
 		Value::Number(n) => out.push_str(&format!("{}", n)),
-		Value::String(s) => out.push_str(&format!("{:?}", s)),
+		Value::String(s) => out.push_str(&format!(
+			"\"{}\"",
+			s.replace('\\', "\\\\")
+				.replace('"', "\\\"")
+				.replace('\n', "\\n")
+				.replace('\t', "\\t")
+				.replace('\r', "\\r")
+				.replace("$", "''$")
+		)),
 		Value::Array(a) => {
 			if a.is_empty() {
 				out.push_str("[ ]");

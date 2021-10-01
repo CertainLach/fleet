@@ -40,6 +40,10 @@ pub grammar nixlike() for str {
 	rule string_char() -> &'input str
 		= "\\\"" { "\"" }
 		/ "\\\\" { "\\" }
+		/ "\\n" { "\n" }
+		/ "\\t" { "\t" }
+		/ "\\r" { "\r" }
+		/ "''$" { "$" }
 		/ c:$([_]) { c }
 	rule string() -> String
 		= quiet! { "\"" v:(!"\"" c:string_char() {c})* "\"" { v.into_iter().collect() } } / expected!("<string>")
@@ -47,7 +51,10 @@ pub grammar nixlike() for str {
 		= quiet! { "true" {true}
 		/ "false" {false} } / expected!("<boolean>")
 	rule indent() -> String
-		= quiet! { s:$(['a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-']+) { s.to_owned() } } / expected!("<identifier>")
+		= quiet! {
+			s:$(['a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-']+) { s.to_owned() }
+			/ "\"" s:$(['a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' | '.']+) "\"" { s.to_owned() }
+		} / expected!("<identifier>")
 	rule object() -> LinkedHashMap<String, Value>
 		= "{" _
 			e:(k:indent()++(_ "." _) _ "=" _ v:value() _ ";" _ {(k, v)})*
@@ -111,20 +118,5 @@ pub fn serialize<S: Serialize>(value: S) -> Result<String, Error> {
 
 #[test]
 fn test() {
-	let v: serde_json::Value = parse_str(
-		r#"
-			{
-				b.c = 2;
-				b.d = "hello";
-				c = {
-					k = 123;
-					p = 231;
-					ll = [1 2 3 [] [[4 5 6]] ];
-				};
-			}
-		"#,
-	)
-	.unwrap();
-	let s: String = serialize(v).unwrap();
-	println!("{}", s);
+	assert_eq!(serialize("Hello\nworld").unwrap(), "\"Hello\\nworld\"");
 }
