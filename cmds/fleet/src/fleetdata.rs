@@ -11,18 +11,29 @@ pub struct HostData {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FleetData {
 	#[serde(default)]
 	pub hosts: BTreeMap<String, HostData>,
 	#[serde(default)]
 	#[serde(skip_serializing_if = "BTreeMap::is_empty")]
-	pub secrets: BTreeMap<String, FleetSecret>,
+	pub shared_secrets: BTreeMap<String, FleetSharedSecret>,
+	#[serde(default)]
+	#[serde(skip_serializing_if = "BTreeMap::is_empty")]
+	pub host_secrets: BTreeMap<String, BTreeMap<String, FleetSecret>>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetSharedSecret {
+	pub owners: Vec<String>,
+	#[serde(flatten)]
+	pub secret: FleetSecret,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FleetSecret {
-	pub owners: Vec<String>,
 	#[serde(default)]
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub expire_at: Option<DateTime<Utc>>,
