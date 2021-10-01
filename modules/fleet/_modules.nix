@@ -1,0 +1,4 @@
+[
+  ./meta.nix
+  ./secrets.nix
+]

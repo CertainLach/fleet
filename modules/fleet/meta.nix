@@ -1,4 +1,4 @@
-{ lib, fleet, ... }: with lib;
+{ lib, fleet, config, ... }: with lib;
 let
   host = with types; {
     options = {
@@ -6,17 +6,6 @@ let
         type = listOf anything;
         description = "List of nixos modules";
         default = [ ];
-      };
-      network = mkOption {
-        type = submodule {
-          options = {
-            fleetIp = {
-              type = str;
-              description = "Ip which is available to all hosts in fleet";
-            };
-          };
-        };
-        description = "Network definition of host";
       };
       system = mkOption {
         type = str;
@@ -36,12 +25,16 @@ in
       default = { };
       description = "Configurations of individual hosts";
     };
+    globalModules = mkOption {
+      type = listOf anything;
+      description = "Modules, which should be added to every system";
+      default = [ ];
+    };
   };
-  config.hosts = fleet.hostsToAttrs (host: {
-    modules = [
-      ({ ... }: {
-        nixpkgs.overlays = [ (import ../pkgs) ];
-      })
-    ];
-  });
+  config = {
+    hosts = fleet.hostsToAttrs (host: {
+      modules = config.globalModules;
+    });
+    globalModules = import ../nixos/_modules.nix;
+  };
 }

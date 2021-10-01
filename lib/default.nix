@@ -5,7 +5,7 @@
     in
     rec {
       root = nixpkgs.lib.evalModules {
-        modules = (import ../modules/modules.nix { inherit data; }) ++ [ config ];
+        modules = (import ../modules/fleet/_modules.nix) ++ [ config data ];
         specialArgs = {
           inherit nixpkgs;
           fleet = import ./fleetLib.nix {
