@@ -11,7 +11,7 @@ use anyhow::Result;
 use structopt::clap::AppSettings::*;
 use structopt::StructOpt;
 
-use cmds::{build_systems::BuildSystems, secrets::Secrets};
+use cmds::{build_systems::BuildSystems, info::Info, secrets::Secrets};
 use host::{Config, FleetOpts};
 
 #[derive(StructOpt)]
@@ -20,6 +20,8 @@ enum Opts {
 	BuildSystems(BuildSystems),
 	/// Secret management
 	Secrets(Secrets),
+	/// Config parsing
+	Info(Info),
 }
 
 #[derive(StructOpt)]
@@ -40,6 +42,7 @@ fn run_command(config: &Config, command: Opts) -> Result<()> {
 	match command {
 		Opts::BuildSystems(c) => c.run(config)?,
 		Opts::Secrets(s) => s.run(config)?,
+		Opts::Info(i) => i.run(config)?,
 	};
 	Ok(())
 }

@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::Result;
+use serde::de::DeserializeOwned;
 use structopt::clap::ArgGroup;
 use structopt::StructOpt;
 
@@ -77,6 +78,17 @@ impl Config {
 			.arg("eval")
 			.arg(self.full_attr_name("fleetConfigurations.default.configuredHosts"))
 			.args(&["--apply", "builtins.attrNames", "--json", "--show-trace"])
+			.inherit_stdio()
+			.run_json()
+	}
+	pub fn config_attr<T: DeserializeOwned>(&self, host: &str, attr: &str) -> Result<T> {
+		Command::new("nix")
+			.arg("eval")
+			.arg(self.full_attr_name(&format!(
+				"fleetConfigurations.default.configuredSystems.{}.config.{}",
+				host, attr
+			)))
+			.args(&["--json", "--show-trace"])
 			.inherit_stdio()
 			.run_json()
 	}
