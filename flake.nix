@@ -24,6 +24,7 @@
           rust
           cargo-edit
           cargo-udeps
+          cargo-fuzz
 
           pkgconfig
           openssl

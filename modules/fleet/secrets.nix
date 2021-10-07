@@ -78,7 +78,7 @@ in
           {
             secrets = (mapAttrs cleanupSecret
               (filterAttrs (_: v: builtins.elem host v.owners) config.sharedSecrets)
-            ) // (mapAttrs cleanupSecret (if config.hostSecrets ? host then config.hostSecrets.${host} else {}));
+            ) // (mapAttrs cleanupSecret (config.hostSecrets.${host} or {}));
           }
         ];
     });

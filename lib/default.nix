@@ -19,10 +19,12 @@
         map
           (
             name: {
-              inherit name; value = nixpkgs.lib.nixosSystem {
-              system = configuredHosts.${name}.system;
-              modules = configuredHosts.${name}.modules;
-            };
+              inherit name;
+              value = nixpkgs.lib.nixosSystem {
+                system = configuredHosts.${name}.system;
+                modules = configuredHosts.${name}.modules;
+                pkgs = import nixpkgs { system = configuredHosts.${name}.system; };
+              };
             }
           )
           (builtins.attrNames root.config.hosts)
