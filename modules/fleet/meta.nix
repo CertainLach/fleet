@@ -3,7 +3,12 @@ let
   host = with types; {
     options = {
       modules = mkOption {
-        type = listOf anything;
+        type = listOf (mkOptionType {
+          name = "submodule";
+          inherit (submodule { }) check;
+          merge = lib.options.mergeOneOption;
+          description = "Nixos modules";
+        });
         description = "List of nixos modules";
         default = [ ];
       };
@@ -26,7 +31,12 @@ in
       description = "Configurations of individual hosts";
     };
     globalModules = mkOption {
-      type = listOf anything;
+      type = listOf (mkOptionType {
+        name = "submodule";
+        inherit (submodule { }) check;
+        merge = lib.options.mergeOneOption;
+        description = "Nixos modules";
+      });
       description = "Modules, which should be added to every system";
       default = [ ];
     };
