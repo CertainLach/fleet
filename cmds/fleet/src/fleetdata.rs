@@ -39,7 +39,12 @@ pub struct FleetSecret {
 	pub expire_at: Option<DateTime<Utc>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub public: Option<String>,
-	#[serde(serialize_with = "as_z85", deserialize_with = "from_z85")]
+	#[serde(
+		default,
+		skip_serializing_if = "Vec::is_empty",
+		serialize_with = "as_z85",
+		deserialize_with = "from_z85"
+	)]
 	pub secret: Vec<u8>,
 }
 

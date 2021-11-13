@@ -70,17 +70,21 @@ impl Secrets {
 					let mut input = vec![];
 					io::stdin().read_to_end(&mut input)?;
 
-					let mut encrypted = vec![];
-					let recipients = recipients
-						.iter()
-						.cloned()
-						.map(|r| Box::new(r) as Box<dyn age::Recipient>)
-						.collect();
-					let mut encryptor =
-						age::Encryptor::with_recipients(recipients).wrap_output(&mut encrypted)?;
-					io::copy(&mut Cursor::new(input), &mut encryptor)?;
-					encryptor.finish()?;
-					encrypted
+					if input.is_empty() {
+						input
+					} else {
+						let mut encrypted = vec![];
+						let recipients = recipients
+							.iter()
+							.cloned()
+							.map(|r| Box::new(r) as Box<dyn age::Recipient>)
+							.collect();
+						let mut encryptor = age::Encryptor::with_recipients(recipients)
+							.wrap_output(&mut encrypted)?;
+						io::copy(&mut Cursor::new(input), &mut encryptor)?;
+						encryptor.finish()?;
+						encrypted
+					}
 				};
 
 				let mut data = config.data_mut();

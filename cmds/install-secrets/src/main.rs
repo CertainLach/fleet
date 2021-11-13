@@ -29,16 +29,21 @@ struct DataItem {
 	mode: String,
 	owner: String,
 	#[serde(deserialize_with = "from_z85")]
-	secret: Vec<u8>,
+	secret: Option<Vec<u8>>,
 }
 
-fn from_z85<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+fn from_z85<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
 where
 	D: Deserializer<'de>,
 {
 	use serde::de::Error;
-	String::deserialize(deserializer)
-		.and_then(|string| z85::decode(&string).map_err(|err| Error::custom(err.to_string())))
+	if let Some(v) = <Option<String>>::deserialize(deserializer)? {
+		Ok(Some(
+			z85::decode(&v).map_err(|err| Error::custom(err.to_string()))?,
+		))
+	} else {
+		Ok(None)
+	}
 }
 
 type Data = HashMap<String, DataItem>;
@@ -49,6 +54,11 @@ fn init_secret(
 	name: &str,
 	value: DataItem,
 ) -> Result<()> {
+	if value.secret.is_none() {
+		return Ok(());
+	}
+	let secret = value.secret.as_ref().unwrap();
+
 	let mut path = dir.to_path_buf();
 	path.push(name);
 	if path.strip_prefix(&dir).is_err() {
@@ -88,7 +98,7 @@ fn init_secret(
 	// File is owned by root, and only root can modify it
 
 	let decrypted = {
-		let mut input = Cursor::new(&value.secret);
+		let mut input = Cursor::new(&secret);
 		let decryptor = Decryptor::new(&mut input).context("failed to init decryptor")?;
 		let decryptor = match decryptor {
 			Decryptor::Recipients(r) => r,
