@@ -5,7 +5,6 @@ let
     config = {
       path = mkOptionDefault (if config.secret == null then (error "secret is not set") else "/run/secrets/${config._module.args.name}");
       publicPath = mkOptionDefault (pkgs.writeText "pub-${config._module.args.name}" config.public);
-      secret = mkIf (config.public != null) "";
     };
     options = {
       public = mkOption {
@@ -16,6 +15,7 @@ let
       secret = mkOption {
         type = types.nullOr types.str;
         description = "Encrypted secret data";
+        default = null;
       };
       mode = mkOption {
         type = types.str;
