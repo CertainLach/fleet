@@ -22,8 +22,10 @@
               inherit name;
               value = nixpkgs.lib.nixosSystem {
                 system = configuredHosts.${name}.system;
-                modules = configuredHosts.${name}.modules;
-                pkgs = import nixpkgs { system = configuredHosts.${name}.system; };
+                modules = configuredHosts.${name}.modules ++ (
+                  if configuredHosts.${name}.system == "aarch64-linux" then [ (nixpkgs + "/nixos/modules/installer/sd-card/sd-image-aarch64-installer.nix") ]
+                  else [ ]
+                );
               };
             }
           )
