@@ -59,7 +59,7 @@ in
     };
   };
   config = {
-    system.activationScripts.decryptSecrets = ''
+    system.activationScripts.decryptSecrets = stringAfter ["users" "groups"] ''
       1>&2 echo "setting up secrets"
       ${pkgs.fleet-install-secrets}/bin/fleet-install-secrets ${secretsFile}
     '';
