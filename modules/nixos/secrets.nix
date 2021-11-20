@@ -1,9 +1,12 @@
-{ lib, config, pkgs, ... }: with lib;
+{ lib, config, pkgs, ... }:
+
+with lib;
+
 let
   sysConfig = config;
   secretType = types.submodule ({ config, ... }: {
     config = {
-      path = mkOptionDefault (if config.secret == null then (error "secret is not set") else "/run/secrets/${config._module.args.name}");
+      path = mkOptionDefault "/run/secrets/${config._module.args.name}";
       publicPath = mkOptionDefault (pkgs.writeText "pub-${config._module.args.name}" config.public);
     };
     options = {
@@ -35,12 +38,10 @@ let
 
       path = mkOption {
         type = types.str;
-        readOnly = true;
         description = "Path to the decrypted secret";
       };
       publicPath = mkOption {
         type = types.package;
-        readOnly = true;
         description = "Path to the public part of secret";
       };
     };

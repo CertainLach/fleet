@@ -25,8 +25,9 @@ let
         default = null;
       };
       secret = mkOption {
-        type = str;
+        type = nullOr str;
         description = "Encrypted secret data";
+        default = null;
       };
     };
   };
@@ -78,7 +79,7 @@ in
           {
             secrets = (mapAttrs cleanupSecret
               (filterAttrs (_: v: builtins.elem host v.owners) config.sharedSecrets)
-            ) // (mapAttrs cleanupSecret (config.hostSecrets.${host} or {}));
+            ) // (mapAttrs cleanupSecret (config.hostSecrets.${host} or { }));
           }
         ];
     });
