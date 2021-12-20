@@ -1,11 +1,12 @@
-use std::{env::current_dir, process::Command};
+use std::{env::current_dir, time::Duration};
 
 use crate::{command::CommandExt, host::Config, nix::SYSTEMS_ATTRIBUTE};
 use anyhow::Result;
-use log::info;
 use structopt::StructOpt;
+use tokio::{process::Command, task::LocalSet, time::sleep};
+use tracing::{error, field, info, info_span, warn, Instrument};
 
-#[derive(StructOpt)]
+#[derive(StructOpt, Clone)]
 pub struct BuildSystems {
 	/// --builders arg for nix
 	#[structopt(long)]
@@ -78,117 +79,158 @@ enum Subcommand {
 }
 
 impl BuildSystems {
-	pub fn run(self, config: &Config) -> Result<()> {
-		let hosts = config.list_hosts()?;
-
+	pub async fn run(self, config: &Config) -> Result<()> {
+		let hosts = config.list_hosts().await?;
+		let set = LocalSet::new();
+		let this = &self;
 		for host in hosts.iter() {
 			if config.should_skip(host) {
 				continue;
 			}
-			info!("Building host {}", host);
-			let built = {
-				let dir = tempfile::tempdir()?;
-				dir.path().to_owned()
-			};
+			let config = config.clone();
+			let host = host.clone();
+			let this = this.clone();
+			let span = info_span!("deployment", host = field::display(&host));
+			set.spawn_local(
+				(async move {
+					let res: Result<()> = try {
+						info!("building");
+						let built = {
+							let dir = tempfile::tempdir()?;
+							dir.path().to_owned()
+						};
 
-			let mut nix_build = if self.privileged_build {
-				let mut out = Command::new("sudo");
-				out.arg("nix");
-				out
-			} else {
-				Command::new("nix")
-			};
-			nix_build
-				.args(&["build", "--impure", "--no-link", "--out-link"])
-				.arg(&built)
-				.arg(format!(
-					"{}.{}.config.system.build.toplevel",
-					SYSTEMS_ATTRIBUTE, host,
-				));
-
-			if let Some(builders) = &self.builders {
-				nix_build.arg("--builders").arg(builders);
-			}
-			if let Some(jobs) = &self.jobs {
-				nix_build.arg("--max-jobs");
-				nix_build.arg(format!("{}", jobs));
-			}
-			if !self.fail_fast {
-				nix_build.arg("--keep-going");
-			}
-
-			nix_build.inherit_stdio().run()?;
-			let built = std::fs::canonicalize(built)?;
-			info!("Built closure: {:?}", built);
-
-			let action = Action::from(self.subcommand.clone());
-
-			match action {
-				Action::Upload(action) => {
-					if !config.is_local(host) {
-						info!("Uploading system closure");
-						Command::new("nix")
-							.args(&["copy", "--to"])
-							.arg(format!("ssh://root@{}", host))
+						let mut nix_build = if this.privileged_build {
+							let mut out = Command::new("sudo");
+							out.arg("nix");
+							out
+						} else {
+							Command::new("nix")
+						};
+						nix_build
+							.args(&[
+								"build",
+								"--impure",
+								"--json",
+								// "--show-trace",
+								"--no-link",
+								"--out-link",
+							])
 							.arg(&built)
-							.inherit_stdio()
-							.run()?;
-					}
-					if let Some(action) = action {
-						if action.should_switch_profile() {
-							info!("Switching generation");
-							config
-								.command_on(host, "nix-env", true)
-								.args(&["-p", "/nix/var/nix/profiles/system", "--set"])
-								.arg(&built)
-								.inherit_stdio()
-								.run()?;
+							.arg(format!(
+								"{}.{}.config.system.build.toplevel",
+								SYSTEMS_ATTRIBUTE, host,
+							));
+
+						if let Some(builders) = &this.builders {
+							nix_build.arg("--builders").arg(builders);
 						}
-						info!("Executing activation script");
-						let mut switch_script = built.clone();
-						switch_script.push("bin");
-						switch_script.push("switch-to-configuration");
-						config
-							.command_on(host, switch_script, true)
-							.arg(action.name())
-							.inherit_stdio()
-							.run()?;
-					}
-				}
-				Action::Package(PackageAction::SdImage) => {
-					let mut out = current_dir()?;
-					out.push(format!("sd-image-{}", host));
+						if let Some(jobs) = &this.jobs {
+							nix_build.arg("--max-jobs");
+							nix_build.arg(format!("{}", jobs));
+						}
+						if !this.fail_fast {
+							nix_build.arg("--keep-going");
+						}
 
-					info!("Building sd image to {:?}", out);
-					let mut nix_build = if self.privileged_build {
-						let mut out = Command::new("sudo");
-						out.arg("nix");
-						out
-					} else {
-						Command::new("nix")
+						nix_build.run_nix().await?;
+						let built = std::fs::canonicalize(built)?;
+
+						let action = Action::from(this.subcommand.clone());
+
+						match action {
+							Action::Upload(action) => {
+								if !config.is_local(&host) {
+									info!("uploading system closure");
+									let mut tries = 0;
+									loop {
+										match Command::new("nix")
+											.args(&["copy", "--to"])
+											.arg(format!("ssh://root@{}", host))
+											.arg(&built)
+											.inherit_stdio()
+											.run_nix()
+											.await
+										{
+											Ok(()) => break,
+											Err(e) if tries < 3 => {
+												tries += 1;
+												warn!("Copy failure ({}/3): {}", tries, e);
+												sleep(Duration::from_millis(5000)).await;
+											}
+											Err(e) => return Err(e),
+										}
+									}
+								}
+								if let Some(action) = action {
+									if action.should_switch_profile() {
+										info!("switching generation");
+										config
+											.command_on(&host, "nix-env", true)
+											.args(&["-p", "/nix/var/nix/profiles/system", "--set"])
+											.arg(&built)
+											.inherit_stdio()
+											.run()
+											.await?;
+									}
+									info!("executing activation script");
+									let mut switch_script = built.clone();
+									switch_script.push("bin");
+									switch_script.push("switch-to-configuration");
+									config
+										.command_on(&host, switch_script, true)
+										.arg(action.name())
+										.inherit_stdio()
+										.run()
+										.await?;
+								}
+							}
+							Action::Package(PackageAction::SdImage) => {
+								let mut out = current_dir()?;
+								out.push(format!("sd-image-{}", host));
+
+								info!("building sd image to {:?}", out);
+								let mut nix_build = if this.privileged_build {
+									let mut out = Command::new("sudo");
+									out.arg("nix");
+									out
+								} else {
+									Command::new("nix")
+								};
+								nix_build
+									.args(&["build", "--impure", "--no-link", "--out-link"])
+									.arg(&out)
+									.arg(format!(
+										"{}.{}.config.system.build.sdImage",
+										SYSTEMS_ATTRIBUTE, host,
+									));
+								if let Some(builders) = &this.builders {
+									nix_build.arg("--builders").arg(builders);
+								}
+								if let Some(jobs) = &this.jobs {
+									nix_build.arg("--max-jobs");
+									nix_build.arg(format!("{}", jobs));
+								}
+								if !this.fail_fast {
+									nix_build.arg("--keep-going");
+								}
+
+								nix_build.inherit_stdio().run_nix().await?;
+							}
+						};
 					};
-					nix_build
-						.args(&["build", "--impure", "--no-link", "--out-link"])
-						.arg(&out)
-						.arg(format!(
-							"{}.{}.config.system.build.sdImage",
-							SYSTEMS_ATTRIBUTE, host,
-						));
-					if let Some(builders) = &self.builders {
-						nix_build.arg("--builders").arg(builders);
+					match res {
+						Ok(_) => {}
+						Err(e) => {
+							error!("failed to deploy host: {}", e)
+						}
 					}
-					if let Some(jobs) = &self.jobs {
-						nix_build.arg("--max-jobs");
-						nix_build.arg(format!("{}", jobs));
-					}
-					if !self.fail_fast {
-						nix_build.arg("--keep-going");
-					}
-
-					nix_build.inherit_stdio().run()?;
-				}
-			};
+					Ok(())
+				})
+				.instrument(span),
+			);
 		}
+		set.await;
 		Ok(())
 	}
 }

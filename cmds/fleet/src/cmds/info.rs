@@ -30,13 +30,13 @@ pub enum InfoCmd {
 }
 
 impl Info {
-	pub fn run(self, config: &Config) -> Result<()> {
+	pub async fn run(self, config: &Config) -> Result<()> {
 		let mut data = Vec::new();
 		match self.cmd {
 			InfoCmd::ListHosts { ref tagged } => {
-				'host: for host in config.list_hosts()? {
+				'host: for host in config.list_hosts().await? {
 					if !tagged.is_empty() {
-						let tags: Vec<String> = config.config_attr(&host, "tags")?;
+						let tags: Vec<String> = config.config_attr(&host, "tags").await?;
 						for tag in tagged {
 							if !tags.contains(&tag) {
 								continue 'host;
@@ -57,10 +57,18 @@ impl Info {
 				);
 				let mut out = <BTreeSet<String>>::new();
 				if external {
-					out.extend(config.config_attr::<Vec<String>>(&host, "network.externalIps")?);
+					out.extend(
+						config
+							.config_attr::<Vec<String>>(&host, "network.externalIps")
+							.await?,
+					);
 				}
 				if internal {
-					out.extend(config.config_attr::<Vec<String>>(&host, "network.internalIps")?);
+					out.extend(
+						config
+							.config_attr::<Vec<String>>(&host, "network.internalIps")
+							.await?,
+					);
 				}
 				for ip in out {
 					data.push(ip);

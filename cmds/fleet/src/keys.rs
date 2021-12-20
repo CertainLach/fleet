@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use crate::{command::CommandExt, host::Config};
 use anyhow::{anyhow, Result};
-use log::warn;
+use tracing::warn;
 
 impl Config {
 	pub fn cached_key(&self, host: &str) -> Option<String> {
@@ -21,7 +21,7 @@ impl Config {
 		host.encryption_key = key.trim().to_string();
 	}
 
-	pub fn key(&self, host: &str) -> anyhow::Result<String> {
+	pub async fn key(&self, host: &str) -> anyhow::Result<String> {
 		if let Some(key) = self.cached_key(host) {
 			Ok(key)
 		} else {
@@ -29,19 +29,20 @@ impl Config {
 			let key = self
 				.command_on(host, "cat", false)
 				.arg("/etc/ssh/ssh_host_ed25519_key.pub")
-				.run_string()?;
+				.run_string()
+				.await?;
 			self.update_key(host, key.clone());
 			Ok(key)
 		}
 	}
-	pub fn recipient(&self, host: &str) -> anyhow::Result<age::ssh::Recipient> {
-		let key = self.key(host)?;
+	pub async fn recipient(&self, host: &str) -> anyhow::Result<age::ssh::Recipient> {
+		let key = self.key(host).await?;
 		age::ssh::Recipient::from_str(&key).map_err(|e| anyhow!("parse recipient error: {:?}", e))
 	}
 
-	pub fn orphaned_data(&self) -> Result<Vec<String>> {
+	pub async fn orphaned_data(&self) -> Result<Vec<String>> {
 		let mut out = Vec::new();
-		let host_names = self.list_hosts()?;
+		let host_names = self.list_hosts().await?;
 		for hostname in self
 			.data()
 			.hosts

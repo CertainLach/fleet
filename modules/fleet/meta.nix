@@ -45,6 +45,6 @@ in
     hosts = fleet.hostsToAttrs (host: {
       modules = config.globalModules;
     });
-    globalModules = import ../nixos/_modules.nix;
+    globalModules = import ../../nixos/modules/module-list.nix;
   };
 }

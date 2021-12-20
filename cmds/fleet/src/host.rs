@@ -4,7 +4,6 @@ use std::{
 	ffi::{OsStr, OsString},
 	ops::Deref,
 	path::PathBuf,
-	process::Command,
 	sync::Arc,
 };
 
@@ -12,6 +11,7 @@ use anyhow::Result;
 use serde::de::DeserializeOwned;
 use structopt::clap::ArgGroup;
 use structopt::StructOpt;
+use tokio::process::Command;
 
 use crate::{command::CommandExt, fleetdata::FleetData};
 
@@ -73,15 +73,15 @@ impl Config {
 		str
 	}
 
-	pub fn list_hosts(&self) -> Result<Vec<String>> {
+	pub async fn list_hosts(&self) -> Result<Vec<String>> {
 		Command::new("nix")
 			.arg("eval")
 			.arg(self.full_attr_name("fleetConfigurations.default.configuredHosts"))
 			.args(&["--apply", "builtins.attrNames", "--json", "--show-trace"])
-			.inherit_stdio()
-			.run_json()
+			.run_nix_json()
+			.await
 	}
-	pub fn config_attr<T: DeserializeOwned>(&self, host: &str, attr: &str) -> Result<T> {
+	pub async fn config_attr<T: DeserializeOwned>(&self, host: &str, attr: &str) -> Result<T> {
 		Command::new("nix")
 			.arg("eval")
 			.arg(self.full_attr_name(&format!(
@@ -89,8 +89,8 @@ impl Config {
 				host, attr
 			)))
 			.args(&["--json", "--show-trace"])
-			.inherit_stdio()
-			.run_json()
+			.run_nix_json()
+			.await
 	}
 
 	pub fn data(&self) -> Ref<FleetData> {

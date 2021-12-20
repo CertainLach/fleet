@@ -3,6 +3,7 @@ use crate::{
 	host::Config,
 };
 use anyhow::{bail, Result};
+use futures::{StreamExt, TryStreamExt};
 use std::{
 	io::{self, Cursor, Read},
 	path::PathBuf,
@@ -44,14 +45,14 @@ pub enum Secrets {
 }
 
 impl Secrets {
-	pub fn run(self, config: &Config) -> Result<()> {
+	pub async fn run(self, config: &Config) -> Result<()> {
 		match self {
 			Secrets::ForceKeys => {
-				for host in config.list_hosts()? {
+				for host in config.list_hosts().await? {
 					if config.should_skip(&host) {
 						continue;
 					}
-					config.key(&host)?;
+					config.key(&host).await?;
 				}
 			}
 			Secrets::AddShared {
@@ -61,10 +62,10 @@ impl Secrets {
 				public,
 				public_file,
 			} => {
-				let recipients = machines
-					.iter()
-					.map(|m| config.recipient(m))
-					.collect::<Result<Vec<_>>>()?;
+				let recipients = futures::stream::iter(machines.iter())
+					.then(|m| config.recipient(m))
+					.try_collect::<Vec<_>>()
+					.await?;
 
 				let secret = {
 					let mut input = vec![];
@@ -117,7 +118,7 @@ impl Secrets {
 				public,
 				public_file,
 			} => {
-				let recipient = config.recipient(&machine)?;
+				let recipient = config.recipient(&machine).await?;
 
 				let secret = {
 					let mut input = vec![];
