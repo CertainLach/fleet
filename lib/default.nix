@@ -1,9 +1,9 @@
-{
+{ flake-utils }: {
   fleetConfiguration = { data, nixpkgs, hosts, ... }@allConfig:
     let
       config = builtins.removeAttrs allConfig [ "nixpkgs" "data" ];
     in
-    rec {
+    flake-utils.lib.eachDefaultSystem (system: rec {
       root = nixpkgs.lib.evalModules {
         modules = (import ../modules/fleet/_modules.nix) ++ [ config data ];
         specialArgs = {
@@ -25,11 +25,18 @@
                 modules = configuredHosts.${name}.modules ++ (
                   if configuredHosts.${name}.system == "aarch64-linux" then [ (nixpkgs + "/nixos/modules/installer/sd-card/sd-image-aarch64-installer.nix") ]
                   else [ ]
-                );
+                ) ++ [
+                  ({ ... }: {
+                    nixpkgs.localSystem.system = system;
+                    nixpkgs.crossSystem = if system == configuredHosts.${name}.system then null else {
+                      system = configuredHosts.${name}.system;
+                    };
+                  })
+                ];
               };
             }
           )
           (builtins.attrNames root.config.hosts)
       ); #nixpkgs.lib.nixosSystem {}
-    };
+    });
 }
