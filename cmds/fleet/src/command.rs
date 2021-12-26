@@ -150,6 +150,12 @@ impl CommandExt for Command {
 										info!(target: "nix", "{}", text)
 									}
 								},
+								NixLog::Start { text, level: 0, typ: 108, .. } if text == "" => {
+									// Cache lookup? Coupled with copy log
+								},
+								NixLog::Start { text, level: 4, typ: 101, .. } if text.starts_with("downloading ") => {
+									// NAR downloading, coupled with copy log
+								}
 								NixLog::Stop { .. } => {},
 								NixLog::Result { .. } => {},
 								_ => warn!("unknown log: {:?}", log)

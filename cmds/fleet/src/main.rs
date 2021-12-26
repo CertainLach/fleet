@@ -1,11 +1,7 @@
-#![feature(try_blocks)]
-
 pub mod command;
 pub mod host;
 pub mod keys;
-
 pub mod cmds;
-pub mod nix;
 
 mod fleetdata;
 

@@ -2,15 +2,16 @@
   fleetConfiguration = { data, nixpkgs, hosts, ... }@allConfig:
     let
       config = builtins.removeAttrs allConfig [ "nixpkgs" "data" ];
+      fleetLib = import ./fleetLib.nix {
+        inherit nixpkgs hosts;
+      };
     in
-    flake-utils.lib.eachDefaultSystem (system: rec {
+    nixpkgs.lib.genAttrs flake-utils.lib.defaultSystems (system: rec {
       root = nixpkgs.lib.evalModules {
         modules = (import ../modules/fleet/_modules.nix) ++ [ config data ];
         specialArgs = {
           inherit nixpkgs;
-          fleet = import ./fleetLib.nix {
-            inherit nixpkgs hosts;
-          };
+          fleet = fleetLib;
         };
       };
       configuredHosts = root.config.hosts;
@@ -27,12 +28,16 @@
                   else [ ]
                 ) ++ [
                   ({ ... }: {
+                    nixpkgs.system = system;
                     nixpkgs.localSystem.system = system;
                     nixpkgs.crossSystem = if system == configuredHosts.${name}.system then null else {
                       system = configuredHosts.${name}.system;
                     };
                   })
                 ];
+                specialArgs = {
+                  fleet = fleetLib.hostsToAttrs (host: configuredSystems.${host}.config);
+                };
               };
             }
           )

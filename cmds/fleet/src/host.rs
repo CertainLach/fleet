@@ -16,6 +16,7 @@ use tokio::process::Command;
 use crate::{command::CommandExt, fleetdata::FleetData};
 
 pub struct FleetConfigInternals {
+	pub local_system: String,
 	pub directory: PathBuf,
 	pub opts: FleetOpts,
 	pub data: RefCell<FleetData>,
@@ -66,17 +67,21 @@ impl Config {
 		}
 	}
 
-	pub fn full_attr_name(&self, attr_name: &str) -> OsString {
+	pub fn configuration_attr_name(&self, name: &str) -> OsString {
 		let mut str = self.directory.as_os_str().to_owned();
 		str.push("#");
-		str.push(attr_name);
+		str.push(&format!(
+			"fleetConfigurations.default.{}.{}",
+			self.local_system,
+			name
+		));
 		str
 	}
 
 	pub async fn list_hosts(&self) -> Result<Vec<String>> {
 		Command::new("nix")
 			.arg("eval")
-			.arg(self.full_attr_name("fleetConfigurations.default.configuredHosts"))
+			.arg(self.configuration_attr_name("configuredHosts"))
 			.args(&["--apply", "builtins.attrNames", "--json", "--show-trace"])
 			.run_nix_json()
 			.await
@@ -84,10 +89,7 @@ impl Config {
 	pub async fn config_attr<T: DeserializeOwned>(&self, host: &str, attr: &str) -> Result<T> {
 		Command::new("nix")
 			.arg("eval")
-			.arg(self.full_attr_name(&format!(
-				"fleetConfigurations.default.configuredSystems.{}.config.{}",
-				host, attr
-			)))
+			.arg(self.configuration_attr_name(&format!("configuredSystems.{}.config.{}", host, attr)))
 			.args(&["--json", "--show-trace"])
 			.run_nix_json()
 			.await
@@ -129,10 +131,14 @@ pub struct FleetOpts {
 	/// Host, which should be threaten as current machine
 	#[structopt(long)]
 	pub localhost: Option<String>,
+
+	#[structopt(long, default_value = "x86_64-linux")]
+	pub local_system: String,
 }
 
 impl FleetOpts {
 	pub fn build(mut self) -> Result<Config> {
+		let local_system = self.local_system.clone();
 		if self.localhost.is_none() {
 			self.localhost
 				.replace(hostname::get().unwrap().to_str().unwrap().to_owned());
@@ -148,6 +154,7 @@ impl FleetOpts {
 			opts: self,
 			directory,
 			data,
+			local_system,
 		})))
 	}
 }
