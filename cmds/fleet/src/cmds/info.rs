@@ -2,29 +2,29 @@ use std::collections::BTreeSet;
 
 use crate::host::Config;
 use anyhow::{ensure, Result};
-use structopt::StructOpt;
+use clap::Parser;
 
-#[derive(StructOpt)]
+#[derive(Parser)]
 pub struct Info {
-	#[structopt(long)]
+	#[clap(long)]
 	json: bool,
-	#[structopt(subcommand)]
+	#[clap(subcommand)]
 	cmd: InfoCmd,
 }
 
-#[derive(StructOpt)]
+#[derive(Parser)]
 pub enum InfoCmd {
 	/// List hosts
 	ListHosts {
-		#[structopt(long)]
+		#[clap(long)]
 		tagged: Vec<String>,
 	},
 	/// List ips
 	HostIps {
 		host: String,
-		#[structopt(long)]
+		#[clap(long)]
 		external: bool,
-		#[structopt(long)]
+		#[clap(long)]
 		internal: bool,
 	},
 }

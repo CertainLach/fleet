@@ -3,14 +3,14 @@ use crate::{
 	host::Config,
 };
 use anyhow::{bail, Result};
+use clap::Parser;
 use futures::{StreamExt, TryStreamExt};
 use std::{
 	io::{self, Cursor, Read},
 	path::PathBuf,
 };
-use structopt::StructOpt;
 
-#[derive(StructOpt)]
+#[derive(Parser)]
 pub enum Secrets {
 	/// Force load keys for all defined hosts
 	ForceKeys,
@@ -21,11 +21,11 @@ pub enum Secrets {
 		/// Secret owners
 		machines: Vec<String>,
 		/// Override secret if already present
-		#[structopt(long)]
+		#[clap(long)]
 		force: bool,
-		#[structopt(long)]
+		#[clap(long)]
 		public: Option<String>,
-		#[structopt(long)]
+		#[clap(long)]
 		public_file: Option<PathBuf>,
 	},
 	/// Add secret, data should be provided in stdin
@@ -35,11 +35,11 @@ pub enum Secrets {
 		/// Secret owners
 		machine: String,
 		/// Override secret if already present
-		#[structopt(long)]
+		#[clap(long)]
 		force: bool,
-		#[structopt(long)]
+		#[clap(long)]
 		public: Option<String>,
-		#[structopt(long)]
+		#[clap(long)]
 		public_file: Option<PathBuf>,
 	},
 }

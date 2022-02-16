@@ -8,35 +8,30 @@ mod fleetdata;
 use std::io;
 
 use anyhow::{anyhow, Result};
-use structopt::clap::AppSettings::*;
-use structopt::StructOpt;
+use clap::Parser;
 
 use cmds::{build_systems::BuildSystems, info::Info, secrets::Secrets};
 use host::{Config, FleetOpts};
 use tracing::{info, metadata::LevelFilter};
 use tracing_subscriber::EnvFilter;
 
-#[derive(StructOpt)]
+#[derive(Parser)]
 enum Opts {
 	/// Prepare systems for deployments
 	BuildSystems(BuildSystems),
 	/// Secret management
+	#[clap(subcommand)]
 	Secrets(Secrets),
 	/// Config parsing
 	Info(Info),
 }
 
-#[derive(StructOpt)]
-#[structopt(
-	version = "1.0",
-	author,
-	global_setting(ColorAuto),
-	global_setting(ColoredHelp)
-)]
+#[derive(Parser)]
+#[clap(version = "1.0", author)]
 struct RootOpts {
-	#[structopt(flatten)]
+	#[clap(flatten)]
 	fleet_opts: FleetOpts,
-	#[structopt(subcommand)]
+	#[clap(subcommand)]
 	command: Opts,
 }
 
@@ -64,7 +59,7 @@ async fn main() -> Result<()> {
 		.map_err(|e| anyhow!("Failed to initialize logger: {}", e))?;
 
 	info!("Starting");
-	let opts = RootOpts::from_args();
+	let opts = RootOpts::parse();
 	let config = opts.fleet_opts.build()?;
 
 	match run_command(&config, opts.command).await {

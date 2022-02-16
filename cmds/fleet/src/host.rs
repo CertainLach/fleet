@@ -8,9 +8,8 @@ use std::{
 };
 
 use anyhow::Result;
+use clap::{ArgGroup, Parser};
 use serde::de::DeserializeOwned;
-use structopt::clap::ArgGroup;
-use structopt::StructOpt;
 use tokio::process::Command;
 
 use crate::{command::CommandExt, fleetdata::FleetData};
@@ -121,22 +120,25 @@ impl Config {
 	}
 }
 
-#[derive(StructOpt, Clone)]
-#[structopt(group = ArgGroup::with_name("target_hosts"))]
+#[derive(Parser, Clone)]
+#[clap(group = ArgGroup::new("target_hosts"))]
 pub struct FleetOpts {
 	/// All hosts except those would be skipped
-	#[structopt(long, number_of_values = 1, group = "target_hosts")]
+	#[clap(long, number_of_values = 1, group = "target_hosts")]
 	only: Vec<String>,
 
 	/// Hosts to skip
-	#[structopt(long, number_of_values = 1, group = "target_hosts")]
+	#[clap(long, number_of_values = 1, group = "target_hosts")]
 	skip: Vec<String>,
 
 	/// Host, which should be threaten as current machine
-	#[structopt(long)]
+	#[clap(long)]
 	pub localhost: Option<String>,
 
-	#[structopt(long, default_value = "x86_64-linux")]
+	// TODO: unhardcode x86_64-linux
+	/// Override detected system for host, to perform builds via
+	/// binfmt-declared qemu instead of trying to crosscompile
+	#[clap(long, default_value = "x86_64-linux")]
 	pub local_system: String,
 }
 

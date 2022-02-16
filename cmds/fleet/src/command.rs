@@ -63,6 +63,7 @@ impl<'de> Deserialize<'de> for LogField {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase", tag = "action")]
+#[allow(dead_code)]
 enum NixLog {
 	Msg {
 		level: u32,

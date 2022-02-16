@@ -2,25 +2,28 @@ use std::{env::current_dir, time::Duration};
 
 use crate::{command::CommandExt, host::Config};
 use anyhow::Result;
-use structopt::StructOpt;
+use clap::Parser;
 use tokio::{process::Command, task::LocalSet, time::sleep};
 use tracing::{error, field, info, info_span, warn, Instrument};
 
-#[derive(StructOpt, Clone)]
+#[derive(Parser, Clone)]
 pub struct BuildSystems {
-	/// --builders arg for nix
-	#[structopt(long)]
-	builders: Option<String>,
 	/// Jobs to run locally
-	#[structopt(long)]
+	#[clap(long)]
 	jobs: Option<usize>,
 	/// Do not continue on error
-	#[structopt(long)]
+	#[clap(long)]
 	fail_fast: bool,
-	#[structopt(long)]
+	/// Run builds as sudo
+	#[clap(long)]
 	privileged_build: bool,
-	#[structopt(subcommand)]
+	#[clap(subcommand)]
 	subcommand: Subcommand,
+
+	/// --builders arg for nix
+	#[clap(long)]
+	builders: Option<String>,
+	/// --show-trace arg for nix
 	#[structopt(long)]
 	show_trace: bool,
 }
@@ -65,7 +68,7 @@ impl From<Subcommand> for Action {
 	}
 }
 
-#[derive(StructOpt, Clone)]
+#[derive(Parser, Clone)]
 enum Subcommand {
 	/// Upload, but do not switch
 	Upload,

@@ -20,7 +20,7 @@ age = { version = "0.7.0", features = ["ssh", "armor"] }
 base64 = "0.13.0"
 chrono = { version = "0.4.19", features = ["serde"] }
 z85 = "3.0.3"
-structopt = "0.3.23"
+clap = { version = "3.1.0", features = ["derive", "env", "wrap_help", "unicode"] }
 tokio = { version = "1.14.0", features = ["full"] }
 tracing = "0.1.29"
 tracing-subscriber = { version = "0.3.3", features = ["fmt", "env-filter"] }

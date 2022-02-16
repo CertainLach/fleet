@@ -1,5 +1,6 @@
 use age::Decryptor;
 use anyhow::{anyhow, bail, Context, Result};
+use clap::Parser;
 use log::{error, warn};
 use nix::fcntl::{renameat2, RenameFlags};
 use nix::sys::stat::Mode;
@@ -15,10 +16,9 @@ use std::{
 	os::unix::fs::DirBuilderExt,
 	path::{Path, PathBuf},
 };
-use structopt::StructOpt;
 
-#[derive(StructOpt)]
-#[structopt(author)]
+#[derive(Parser)]
+#[clap(author)]
 struct Opts {
 	data: PathBuf,
 }
@@ -132,7 +132,7 @@ fn main() -> anyhow::Result<()> {
 		.filter_level(log::LevelFilter::Info)
 		.init();
 
-	let opts = Opts::from_args();
+	let opts = Opts::parse();
 	let data = fs::read(&opts.data).context("failed to read secrets data")?;
 	let data_str = from_utf8(&data).context("failed to read data to string")?;
 	let data: Data = serde_json::from_str(data_str).context("failed to parse data")?;
