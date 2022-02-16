@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use serde::{
 	de::{DeserializeOwned, Visitor},
-	Deserialize, 
+	Deserialize,
 };
 use tokio::{process::Command, select};
 use tokio_util::codec::{BytesCodec, FramedRead, LinesCodec};
@@ -153,8 +153,14 @@ impl CommandExt for Command {
 								NixLog::Start { text, level: 0, typ: 108, .. } if text == "" => {
 									// Cache lookup? Coupled with copy log
 								},
+								NixLog::Start { text, level: 4, typ: 109, .. } if text.starts_with("querying info about ") => {
+									// Cache lookup
+								}
 								NixLog::Start { text, level: 4, typ: 101, .. } if text.starts_with("downloading ") => {
 									// NAR downloading, coupled with copy log
+								}
+								NixLog::Start { text, level: 1, typ: 111, .. } if text.starts_with("waiting for a machine to build ") => {
+									// Useless repeating notification about build
 								}
 								NixLog::Stop { .. } => {},
 								NixLog::Result { .. } => {},

@@ -72,8 +72,7 @@ impl Config {
 		str.push("#");
 		str.push(&format!(
 			"fleetConfigurations.default.{}.{}",
-			self.local_system,
-			name
+			self.local_system, name
 		));
 		str
 	}
@@ -89,7 +88,12 @@ impl Config {
 	pub async fn config_attr<T: DeserializeOwned>(&self, host: &str, attr: &str) -> Result<T> {
 		Command::new("nix")
 			.arg("eval")
-			.arg(self.configuration_attr_name(&format!("configuredSystems.{}.config.{}", host, attr)))
+			.arg(
+				self.configuration_attr_name(&format!(
+					"configuredSystems.{}.config.{}",
+					host, attr
+				)),
+			)
 			.args(&["--json", "--show-trace"])
 			.run_nix_json()
 			.await

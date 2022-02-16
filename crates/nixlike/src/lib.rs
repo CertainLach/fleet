@@ -1,3 +1,6 @@
+//! Serialization/deserialization for nix subset usable for static configurations
+//! Serialized results from this library are readable by both this library and standard nix tools
+
 use linked_hash_map::LinkedHashMap;
 use peg::str::LineCol;
 use se_impl::MySerialize;

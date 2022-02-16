@@ -1,7 +1,7 @@
+pub mod cmds;
 pub mod command;
 pub mod host;
 pub mod keys;
-pub mod cmds;
 
 mod fleetdata;
 
