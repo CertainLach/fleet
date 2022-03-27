@@ -1,14 +1,23 @@
-{ lib, fleet, config, ... }: with lib;
+{ lib, fleetLib, config, ... }: with lib; with fleetLib;
 let
   sharedSecret = with types; {
     options = {
       owners = mkOption {
         type = listOf str;
         description = ''
+          For which owners this secret is currently encrypted,
+          if not matches expectedOwners - then this secret is considered outdated, and
+          should be regenerated/reencrypted
+        '';
+      };
+      expectedOwners = mkOption {
+        type = listOf str;
+        description = ''
           List of hosts to encrypt secret for
 
           Secrets would be decrypted and stored to /run/secrets/$\{name} on owners
         '';
+        default = [ ];
       };
       generator = mkOption {
         type = package;
@@ -67,7 +76,13 @@ in
       description = "Host secrets";
     };
   };
-  config = with fleet; {
+  config = {
+    assertions = mapAttrsToList
+      (name: secret: {
+        assertion = builtins.sort (a: b: a < b) secret.owners == builtins.sort (a: b: a < b) secret.expectedOwners;
+        message = "Shared secret ${name} is expected to be encrypted for ${builtins.toJSON secret.expectedOwners}, but it is encrypted for ${builtins.toJSON secret.owners}";
+      })
+      config.sharedSecrets;
     hosts = hostsToAttrs (host: {
       modules =
         let

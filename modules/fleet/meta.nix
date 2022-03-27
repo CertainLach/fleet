@@ -1,4 +1,4 @@
-{ lib, fleet, config, ... }: with lib;
+{ lib, fleetLib, config, ... }: with lib;
 let
   host = with types; {
     options = {
@@ -42,7 +42,7 @@ in
     };
   };
   config = {
-    hosts = fleet.hostsToAttrs (host: {
+    hosts = fleetLib.hostsToAttrs (host: {
       modules = config.globalModules;
     });
     globalModules = import ../../nixos/modules/module-list.nix;

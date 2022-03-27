@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-dprint-core = "0.50.0"
+dprint-core = "0.51.0"
 linked-hash-map = "0.5.4"
 peg = "0.8.0"
 serde = "1.0.130"

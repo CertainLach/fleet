@@ -1,7 +1,5 @@
 # Shared functions for fleet configuration, available as `fleet` module argument
-{ nixpkgs, hosts }: with nixpkgs.lib; rec {
-  # Modules can't register hosts because of infinite recursion
-  hostNames = attrNames hosts;
+{ nixpkgs, hostNames }: with nixpkgs.lib; rec {
   hostsToAttrs = f: listToAttrs (
     map (name: { inherit name; value = f name; }) hostNames
   );
@@ -25,4 +23,7 @@
       a = elemAt sorted 0;
       b = elemAt sorted 1;
     };
+  hostPairName = this: other:
+    if this < other then "${this}-${other}"
+    else "${other}-${this}";
 }
