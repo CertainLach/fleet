@@ -443,12 +443,13 @@ dependencies = [
 
 [[package]]
 name = "dprint-core"
-version = "0.50.0"
+version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a596556533e5739e71dfe105c8b4496c3eccaf5aa96d14b19db2fdf4157085a"
+checksum = "036819ad3d310aef6ec2d2bacb83a4815f24e2ce715b68afc73ef395f392ae9f"
 dependencies = [
  "anyhow",
  "bumpalo",
+ "indexmap",
  "rustc-hash",
  "serde",
 ]
@@ -841,6 +842,7 @@ checksum = "282a6247722caba404c065016bbfa522806e51714c34f5dfc3e4a3a46fcb4223"
 dependencies = [
  "autocfg 1.1.0",
  "hashbrown",
+ "serde",
 ]
 
 [[package]]
