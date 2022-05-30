@@ -196,10 +196,33 @@ impl CommandExt for Command {
 	}
 
 	async fn run(&mut self) -> Result<()> {
-		self.inherit_stdio();
-		let out = self.spawn()?.wait_with_output().await?;
-		if !out.status.success() {
-			anyhow::bail!("command ({:?}) failed with status {}", self, out.status);
+		self.stderr(Stdio::piped());
+		self.stdout(Stdio::piped());
+		let mut child = self.spawn()?;
+		let mut stderr = child.stderr.take().unwrap();
+		let mut stdout = child.stdout.take().unwrap();
+		let mut err = FramedRead::new(&mut stderr, LinesCodec::new());
+		let mut out = FramedRead::new(&mut stdout, LinesCodec::new());
+		loop {
+			select! {
+				e = err.next() => {
+					if let Some(e) = e {
+						warn!("{}", e?);
+					}
+				},
+				o = out.next() => {
+					if let Some(o) = o {
+						info!("{}", o?);
+					}
+				},
+				code = child.wait() => {
+					let code = code?;
+					if !code.success() {
+						anyhow::bail!("command ({:?}) failed with status {}", self, code);
+					}
+					break;
+				}
+			}
 		}
 		Ok(())
 	}
