@@ -24,12 +24,18 @@ struct Opts {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DataItem {
 	group: String,
 	mode: String,
 	owner: String,
+
 	#[serde(deserialize_with = "from_z85")]
 	secret: Option<Vec<u8>>,
+	public: String,
+
+	secret_hash: String,
+	public_path: String,
 }
 
 fn from_z85<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
