@@ -1,4 +1,4 @@
-use std::{env::current_dir, time::Duration};
+use std::{env::current_dir, process::Stdio, time::Duration};
 
 use crate::{command::CommandExt, host::Config};
 use anyhow::Result;
@@ -174,7 +174,7 @@ impl BuildSystems {
 					config
 						.command_on(&host, switch_script, true)
 						.arg(action.name())
-						.inherit_stdio()
+						.stdout(Stdio::inherit())
 						.run()
 						.await?;
 				}
