@@ -132,7 +132,7 @@ impl CommandExt for Command {
 										info!(target: "nix", "{}", raw_msg.unwrap_or(msg))
 									}
 								},
-								NixLog::Start { ref fields, typ, .. } if typ == 105 && fields.len() >= 1 => {
+								NixLog::Start { ref fields, typ, .. } if typ == 105 && !fields.is_empty() => {
 									if let [LogField::String(drv), ..] = &fields[..] {
 										info!(target: "nix","building {}", drv)
 									} else {
@@ -151,7 +151,7 @@ impl CommandExt for Command {
 										info!(target: "nix", "{}", text)
 									}
 								},
-								NixLog::Start { text, level: 0, typ: 108, .. } if text == "" => {
+								NixLog::Start { text, level: 0, typ: 108, .. } if text.is_empty() => {
 									// Cache lookup? Coupled with copy log
 								},
 								NixLog::Start { text, level: 4, typ: 109, .. } if text.starts_with("querying info about ") => {
@@ -197,7 +197,7 @@ impl CommandExt for Command {
 
 	async fn run(&mut self) -> Result<()> {
 		self.inherit_stdio();
-		let out = self.output().await?;
+		let out = self.spawn()?.wait_with_output().await?;
 		if !out.status.success() {
 			anyhow::bail!("command ({:?}) failed with status {}", self, out.status);
 		}
@@ -211,7 +211,8 @@ impl CommandExt for Command {
 
 	async fn run_string(&mut self) -> Result<String> {
 		self.inherit_stdio();
-		let out = self.output().await?;
+		self.stdout(Stdio::piped());
+		let out = self.spawn()?.wait_with_output().await?;
 		if !out.status.success() {
 			anyhow::bail!("command ({:?}) failed with status {}", self, out.status);
 		}
