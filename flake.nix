@@ -22,6 +22,7 @@
       devShell = (pkgs.mkShell.override { stdenv = llvmPkgs.stdenv; }) {
         nativeBuildInputs = with pkgs; [
           rust
+          lld
           cargo-edit
           cargo-udeps
           cargo-fuzz

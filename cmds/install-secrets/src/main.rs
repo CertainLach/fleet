@@ -6,8 +6,8 @@ use nix::fcntl::{renameat2, RenameFlags};
 use nix::sys::stat::Mode;
 use nix::unistd::{chown, Group, User};
 use serde::{Deserialize, Deserializer};
-use std::fs::{self, DirBuilder};
-use std::io::{self, Cursor, Read};
+use std::fs::{self, DirBuilder, File};
+use std::io::{self, Cursor, Read, Write};
 use std::iter;
 use std::os::unix::prelude::PermissionsExt;
 use std::str::from_utf8;
@@ -32,10 +32,13 @@ struct DataItem {
 
 	#[serde(deserialize_with = "from_z85")]
 	secret: Option<Vec<u8>>,
-	public: String,
+	public: Option<String>,
 
-	secret_hash: String,
-	public_path: String,
+	public_path: PathBuf,
+	stable_public_path: PathBuf,
+
+	secret_path: PathBuf,
+	stable_secret_path: PathBuf,
 }
 
 fn from_z85<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
@@ -54,40 +57,28 @@ where
 
 type Data = HashMap<String, DataItem>;
 
-fn init_secret(
-	identity: &age::ssh::Identity,
-	dir: &Path,
-	name: &str,
-	value: DataItem,
-) -> Result<()> {
+fn init_secret(identity: &age::ssh::Identity, value: DataItem) -> Result<()> {
+	if let Some(public) = &value.public {
+		let mut hashed = File::create(&value.public_path)?;
+		let mut stable_dir = value.stable_public_path.parent().expect("not root");
+		let mut stable_temp =
+			tempfile::NamedTempFile::new_in(stable_dir).context("failed to create tempfile")?;
+		hashed.write_all(public.as_bytes())?;
+		stable_temp.write_all(public.as_bytes())?;
+		stable_temp.flush()?;
+		fs::set_permissions(stable_temp.path(), fs::Permissions::from_mode(0o444))
+			.context("perm")?;
+		fs::set_permissions(&value.public_path, fs::Permissions::from_mode(0o444))
+			.context("perm")?;
+
+		stable_temp
+			.persist(value.stable_public_path)
+			.context("failed to persist")?;
+	}
 	if value.secret.is_none() {
 		return Ok(());
 	}
 	let secret = value.secret.as_ref().unwrap();
-
-	let mut path = dir.to_path_buf();
-	path.push(name);
-	if path.strip_prefix(&dir).is_err() {
-		bail!("found escaping name");
-	}
-
-	let secret_dir = path
-		.parent()
-		.expect("path is in tempdir, so it should have parent");
-
-	if secret_dir != dir {
-		DirBuilder::new()
-			.recursive(true)
-			// o: xrw
-			// g: xr
-			// a: xr
-			.mode(0o755)
-			.create(
-				path.parent()
-					.expect("path is in tempdir, so it should have parent"),
-			)
-			.context("failed to create secret directory")?;
-	}
 
 	let mode = Mode::from_bits(
 		u32::from_str_radix(&value.mode, 8).context("failed to parse mode as octal")?,
@@ -99,10 +90,13 @@ fn init_secret(
 	let group = Group::from_name(&value.group)
 		.context("failed to get group")?
 		.ok_or_else(|| anyhow!("group not found"))?;
-	let mut tempfile =
-		tempfile::NamedTempFile::new_in(secret_dir).context("failed to create tempfile")?;
-	// File is owned by root, and only root can modify it
 
+	let mut stable_dir = value.stable_secret_path.parent().expect("not root");
+	let mut stable_temp =
+		tempfile::NamedTempFile::new_in(stable_dir).context("failed to create tempfile")?;
+	let mut hashed = File::create(&value.secret_path)?;
+
+	// File is owned by root, and only root can modify it
 	let decrypted = {
 		let mut input = Cursor::new(&secret);
 		let decryptor = Decryptor::new(&mut input).context("failed to init decryptor")?;
@@ -121,14 +115,20 @@ fn init_secret(
 		decrypted
 	};
 
-	io::copy(&mut Cursor::new(decrypted), &mut tempfile)
+	io::copy(&mut Cursor::new(&decrypted), &mut stable_temp)
 		.context("failed to write decrypted file")?;
+	io::copy(&mut Cursor::new(decrypted), &mut hashed).context("failed to write decrypted file")?;
 
 	// Make file owned by specified user and group, then change mode
-	chown(tempfile.path(), Some(user.uid), Some(group.gid))
+	chown(stable_temp.path(), Some(user.uid), Some(group.gid))
 		.context("failed to apply user/group")?;
-	fs::set_permissions(tempfile.path(), fs::Permissions::from_mode(mode.bits())).unwrap();
-	tempfile.persist(path).context("failed to persist")?;
+	chown(&value.secret_path, Some(user.uid), Some(group.gid))
+		.context("failed to apply user/group")?;
+	fs::set_permissions(stable_temp.path(), fs::Permissions::from_mode(mode.bits())).unwrap();
+	fs::set_permissions(&value.secret_path, fs::Permissions::from_mode(mode.bits())).unwrap();
+	stable_temp
+		.persist(value.stable_secret_path)
+		.context("failed to persist")?;
 
 	Ok(())
 }
@@ -143,7 +143,12 @@ fn main() -> anyhow::Result<()> {
 	let data_str = from_utf8(&data).context("failed to read data to string")?;
 	let data: Data = serde_json::from_str(data_str).context("failed to parse data")?;
 
-	let tempdir = tempfile::tempdir_in("/run/").context("failed to create secrets tempdir")?;
+	if !fs::metadata("/run/secrets")
+		.map(|m| m.is_dir())
+		.unwrap_or(false)
+	{
+		fs::create_dir("/run/secrets").context("failed to create secrets directory")?;
+	}
 
 	let identity = age::ssh::Identity::from_buffer(
 		&mut Cursor::new(
@@ -155,7 +160,7 @@ fn main() -> anyhow::Result<()> {
 
 	let mut failed = false;
 	for (name, value) in data {
-		if let Err(e) = init_secret(&identity, tempdir.path(), &name, value) {
+		if let Err(e) = init_secret(&identity, value) {
 			error!(
 				"{:?}",
 				e.context(format!("failed to initialize secret {}", name))
@@ -167,26 +172,5 @@ fn main() -> anyhow::Result<()> {
 		bail!("one or more secrets failed");
 	}
 
-	if fs::metadata("/run/secrets")
-		.map(|m| m.is_dir())
-		.unwrap_or(false)
-	{
-		// Already linked
-		renameat2(
-			None,
-			tempdir.path(),
-			None,
-			"/run/secrets",
-			RenameFlags::RENAME_EXCHANGE,
-		)
-		.context("failed to exchange secret directories")?;
-		if tempdir.close().is_err() {
-			warn!("failed to unlink old secrets");
-		}
-	} else {
-		// Link now
-		let persisted = tempdir.into_path();
-		fs::rename(&persisted, "/run/secrets").context("failed to link secret directory")?;
-	}
 	Ok(())
 }
