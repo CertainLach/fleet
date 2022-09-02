@@ -6,7 +6,6 @@ let
   sysConfig = config;
   secretType = types.submodule ({ config, ... }: {
     config = rec {
-      path = warn "use .stableSecretPath instead of .path (at config.secrets.${config._module.args.name})" stableSecretPath;
       stableSecretPath = mkOptionDefault "/run/secrets/secret-stable-${config._module.args.name}";
       secretPath = mkOptionDefault "/run/secrets/secret-${config.secretHash}-${config._module.args.name}";
       secretHash = mkOptionDefault (if config.secret != null then (builtins.hashString "sha1" config.secret) else "<missingno>");
@@ -51,16 +50,12 @@ let
         description = "Hash of .public field";
       };
 
-      path = mkOption {
-        type = types.str;
-        description = "Path to the decrypted secret";
-      };
       stableSecretPath = mkOption {
         type = types.str;
-        description = """
+        description = ''
           Use this, if target process supports re-reading of secret from disk,
           and doesn't needs to be restarted when secret is updated in file
-        """;
+        '';
       };
       secretPath = mkOption {
         type = types.str;
@@ -69,10 +64,10 @@ let
 
       stablePublicPath = mkOption {
         type = types.str;
-        description = """
+        description = ''
           Use this, if target process supports re-reading of secret from disk,
           and doesn't needs to be restarted when secret is updated in file
-        """;
+        '';
       };
       publicPath = mkOption {
         type = types.str;
