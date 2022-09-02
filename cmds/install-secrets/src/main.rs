@@ -1,21 +1,16 @@
 use age::Decryptor;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
-use log::{error, warn};
-use nix::fcntl::{renameat2, RenameFlags};
+use log::error;
 use nix::sys::stat::Mode;
 use nix::unistd::{chown, Group, User};
 use serde::{Deserialize, Deserializer};
-use std::fs::{self, DirBuilder, File};
+use std::fs::{self, File};
 use std::io::{self, Cursor, Read, Write};
 use std::iter;
 use std::os::unix::prelude::PermissionsExt;
 use std::str::from_utf8;
-use std::{
-	collections::HashMap,
-	os::unix::fs::DirBuilderExt,
-	path::{Path, PathBuf},
-};
+use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Parser)]
 #[clap(author)]
@@ -60,7 +55,7 @@ type Data = HashMap<String, DataItem>;
 fn init_secret(identity: &age::ssh::Identity, value: DataItem) -> Result<()> {
 	if let Some(public) = &value.public {
 		let mut hashed = File::create(&value.public_path)?;
-		let mut stable_dir = value.stable_public_path.parent().expect("not root");
+		let stable_dir = value.stable_public_path.parent().expect("not root");
 		let mut stable_temp =
 			tempfile::NamedTempFile::new_in(stable_dir).context("failed to create tempfile")?;
 		hashed.write_all(public.as_bytes())?;
@@ -91,7 +86,7 @@ fn init_secret(identity: &age::ssh::Identity, value: DataItem) -> Result<()> {
 		.context("failed to get group")?
 		.ok_or_else(|| anyhow!("group not found"))?;
 
-	let mut stable_dir = value.stable_secret_path.parent().expect("not root");
+	let stable_dir = value.stable_secret_path.parent().expect("not root");
 	let mut stable_temp =
 		tempfile::NamedTempFile::new_in(stable_dir).context("failed to create tempfile")?;
 	let mut hashed = File::create(&value.secret_path)?;
