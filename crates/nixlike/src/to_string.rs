@@ -5,7 +5,7 @@ use dprint_core::formatting::{
 };
 
 fn write_nix_obj_key_buf(k: &str, v: &Value, out: &mut PrintItems) {
-	if k.contains(".") {
+	if k.contains('.') {
 		out.push_str("\"");
 		out.push_str(k);
 		out.push_str("\"");
@@ -39,7 +39,7 @@ fn write_nix_buf(value: &Value, out: &mut PrintItems) {
 				.replace('\n', "\\n")
 				.replace('\t', "\\t")
 				.replace('\r', "\\r")
-				.replace("$", "\\$")
+				.replace('$', "\\$")
 		)),
 		Value::Array(a) => {
 			if a.is_empty() {

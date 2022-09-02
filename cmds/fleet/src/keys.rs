@@ -50,7 +50,7 @@ impl Config {
 			.filter(|(_, host)| !host.encryption_key.is_empty())
 			.map(|(n, _)| n)
 		{
-			if !host_names.contains(&hostname.to_owned()) {
+			if !host_names.contains(hostname) {
 				out.push(hostname.to_owned())
 			}
 		}

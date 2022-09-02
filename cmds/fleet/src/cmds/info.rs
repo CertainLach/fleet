@@ -38,7 +38,7 @@ impl Info {
 					if !tagged.is_empty() {
 						let tags: Vec<String> = config.config_attr(&host, "tags").await?;
 						for tag in tagged {
-							if !tags.contains(&tag) {
+							if !tags.contains(tag) {
 								continue 'host;
 							}
 						}
