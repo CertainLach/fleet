@@ -20,21 +20,17 @@
           if failedAssertions != [ ]
           then throw "Failed assertions:\n${nixpkgs.lib.concatStringsSep "\n" (map (x: "- ${x}") failedAssertions)}"
           else nixpkgs.lib.showWarnings root.config.warnings root;
-      in
-      rec {
         configuredHosts = rootAssertWarn.config.hosts;
         configuredSecrets = rootAssertWarn.config.secrets;
-        configuredSystems = nixpkgs.lib.listToAttrs (
+        configuredSystems = configuredSystemsWithExtraModules [ ];
+        configuredSystemsWithExtraModules = extraModules: nixpkgs.lib.listToAttrs (
           map
             (
               name: {
                 inherit name;
                 value = nixpkgs.lib.nixosSystem {
                   system = configuredHosts.${name}.system;
-                  modules = configuredHosts.${name}.modules ++ (
-                    if configuredHosts.${name}.system == "aarch64-linux" then [ (nixpkgs + "/nixos/modules/installer/sd-card/sd-image-aarch64-installer.nix") ]
-                    else [ ]
-                  ) ++ [
+                  modules = configuredHosts.${name}.modules ++ extraModules ++ [
                     ({ ... }: {
                       nixpkgs.system = system;
                       nixpkgs.localSystem.system = system;
@@ -51,6 +47,22 @@
               }
             )
             (builtins.attrNames rootAssertWarn.config.hosts)
-        ); #nixpkgs.lib.nixosSystem {}
+        );
+      in
+      rec {
+        inherit configuredHosts configuredSecrets configuredSystems;
+        buildSystems = {
+          toplevel = builtins.mapAttrs (_name: value: value.config.system.build.toplevel) (configuredSystemsWithExtraModules [ ]);
+          sdImage = builtins.mapAttrs (_name: value: value.config.system.build.sdImage) (configuredSystemsWithExtraModules [
+            (nixpkgs + "/nixos/modules/installer/sd-card/sd-image-aarch64-installer.nix")
+          ]);
+          installationCd = builtins.mapAttrs (_name: value: value.config.system.build.isoImage) (configuredSystemsWithExtraModules [
+            (nixpkgs + "/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix")
+            ({ lib, ... }: {
+              # Needed for https://github.com/NixOS/nixpkgs/issues/58959
+              boot.supportedFilesystems = lib.mkForce [ "btrfs" "reiserfs" "vfat" "f2fs" "xfs" "ntfs" "cifs" ];
+            })
+          ]);
+        };
       });
 }

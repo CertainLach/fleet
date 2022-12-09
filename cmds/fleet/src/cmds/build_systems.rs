@@ -49,21 +49,45 @@ impl UploadAction {
 
 enum PackageAction {
 	SdImage,
+	InstallationCd,
+}
+impl PackageAction {
+	fn build_attr(&self) -> String {
+		match self {
+			PackageAction::SdImage => "sdImage".to_owned(),
+			PackageAction::InstallationCd => "installationCd".to_owned(),
+		}
+	}
 }
 
 enum Action {
-	Upload(Option<UploadAction>),
+	Upload { action: Option<UploadAction> },
 	Package(PackageAction),
+}
+impl Action {
+	fn build_attr(&self) -> String {
+		match self {
+			Action::Upload { .. } => "toplevel".to_owned(),
+			Action::Package(p) => p.build_attr(),
+		}
+	}
 }
 
 impl From<Subcommand> for Action {
 	fn from(s: Subcommand) -> Self {
 		match s {
-			Subcommand::Upload => Self::Upload(None),
-			Subcommand::Test => Self::Upload(Some(UploadAction::Test)),
-			Subcommand::Boot => Self::Upload(Some(UploadAction::Boot)),
-			Subcommand::Switch => Self::Upload(Some(UploadAction::Switch)),
+			Subcommand::Upload => Self::Upload { action: None },
+			Subcommand::Test => Self::Upload {
+				action: Some(UploadAction::Test),
+			},
+			Subcommand::Boot => Self::Upload {
+				action: Some(UploadAction::Boot),
+			},
+			Subcommand::Switch => Self::Upload {
+				action: Some(UploadAction::Switch),
+			},
 			Subcommand::SdImage => Self::Package(PackageAction::SdImage),
+			Subcommand::InstallationCd => Self::Package(PackageAction::InstallationCd),
 		}
 	}
 }
@@ -79,13 +103,16 @@ enum Subcommand {
 	/// Upload + test + boot
 	Switch,
 
-	/// Build sd image
+	/// Build SD .img image
 	SdImage,
+	/// Build an installation cd ISO image
+	InstallationCd,
 }
 
 impl BuildSystems {
 	async fn build_task(self, config: Config, host: String) -> Result<()> {
 		info!("building");
+		let action = Action::from(self.subcommand.clone());
 		let built = {
 			let dir = tempfile::tempdir()?;
 			dir.path().to_owned()
@@ -108,10 +135,12 @@ impl BuildSystems {
 				"--out-link",
 			])
 			.arg(&built)
-			.arg(config.configuration_attr_name(&format!(
-				"configuredSystems.{}.config.system.build.toplevel",
-				host
-			)));
+			.arg(
+				config.configuration_attr_name(&format!(
+					"buildSystems.{}.{host}",
+					action.build_attr()
+				)),
+			);
 
 		if self.show_trace {
 			nix_build.arg("--show-trace");
@@ -130,10 +159,8 @@ impl BuildSystems {
 		nix_build.run_nix().await?;
 		let built = std::fs::canonicalize(built)?;
 
-		let action = Action::from(self.subcommand.clone());
-
 		match action {
-			Action::Upload(action) => {
+			Action::Upload { action } => {
 				if !config.is_local(&host) {
 					info!("uploading system closure");
 					let mut tries = 0;
@@ -194,10 +221,43 @@ impl BuildSystems {
 				nix_build
 					.args(&["build", "--impure", "--no-link", "--out-link"])
 					.arg(&out)
-					.arg(config.configuration_attr_name(&format!(
-						"configuredSystems.{}.config.system.build.sdImage",
-						host,
-					)));
+					.arg(
+						config.configuration_attr_name(&format!("buildSystems.sdImage.{}", host,)),
+					);
+				if let Some(builders) = &self.builders {
+					nix_build.arg("--builders").arg(builders);
+				}
+				if let Some(jobs) = &self.jobs {
+					nix_build.arg("--max-jobs");
+					nix_build.arg(format!("{}", jobs));
+				}
+				if !self.fail_fast {
+					nix_build.arg("--keep-going");
+				}
+
+				nix_build.inherit_stdio().run_nix().await?;
+			}
+			Action::Package(PackageAction::InstallationCd) => {
+				let mut out = current_dir()?;
+				out.push(format!("installation-cd-{}", host));
+
+				info!("building sd image to {:?}", out);
+				let mut nix_build = if self.privileged_build {
+					let mut out = Command::new("sudo");
+					out.arg("nix");
+					out
+				} else {
+					Command::new("nix")
+				};
+				nix_build
+					.args(&["build", "--impure", "--no-link", "--out-link"])
+					.arg(&out)
+					.arg(
+						config.configuration_attr_name(&format!(
+							"buildSystems.installationCd.{}",
+							host,
+						)),
+					);
 				if let Some(builders) = &self.builders {
 					nix_build.arg("--builders").arg(builders);
 				}
