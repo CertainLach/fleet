@@ -1,7 +1,7 @@
 use age::Decryptor;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
-use log::error;
+use log::{error, info, warn};
 use nix::sys::stat::Mode;
 use nix::unistd::{chown, Group, User};
 use serde::{Deserialize, Deserializer};
@@ -43,7 +43,7 @@ where
 	use serde::de::Error;
 	if let Some(v) = <Option<String>>::deserialize(deserializer)? {
 		Ok(Some(
-			z85::decode(&v).map_err(|err| Error::custom(err.to_string()))?,
+			z85::decode(v).map_err(|err| Error::custom(err.to_string()))?,
 		))
 	} else {
 		Ok(None)
@@ -71,6 +71,7 @@ fn init_secret(identity: &age::ssh::Identity, value: DataItem) -> Result<()> {
 			.context("failed to persist")?;
 	}
 	if value.secret.is_none() {
+		info!("no secret data found");
 		return Ok(());
 	}
 	let secret = value.secret.as_ref().unwrap();
@@ -109,6 +110,9 @@ fn init_secret(identity: &age::ssh::Identity, value: DataItem) -> Result<()> {
 			.context("failed to decrypt")?;
 		decrypted
 	};
+	if decrypted.is_empty() {
+		warn!("secret is decoded as empty, something is broken?");
+	}
 
 	io::copy(&mut Cursor::new(&decrypted), &mut stable_temp)
 		.context("failed to write decrypted file")?;
@@ -155,6 +159,7 @@ fn main() -> anyhow::Result<()> {
 
 	let mut failed = false;
 	for (name, value) in data {
+		info!("initializing secret {name}");
 		if let Err(e) = init_secret(&identity, value) {
 			error!(
 				"{:?}",

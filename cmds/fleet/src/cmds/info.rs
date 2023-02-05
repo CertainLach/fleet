@@ -1,8 +1,15 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, time::Duration};
 
-use crate::host::Config;
-use anyhow::{ensure, Result};
+use crate::{command::CommandExt, host::Config};
+use anyhow::{bail, ensure, Result};
 use clap::Parser;
+use nixlike::format_nix;
+use serde_json::{json, Value};
+use tokio::{
+	fs::{self, File},
+	io::AsyncWriteExt,
+	process::Command,
+};
 
 #[derive(Parser)]
 pub struct Info {

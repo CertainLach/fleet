@@ -51,6 +51,7 @@
       in
       rec {
         inherit configuredHosts configuredSecrets configuredSystems;
+        configUnchecked = root.config;
         buildSystems = {
           toplevel = builtins.mapAttrs (_name: value: value.config.system.build.toplevel) (configuredSystemsWithExtraModules [ ]);
           sdImage = builtins.mapAttrs (_name: value: value.config.system.build.sdImage) (configuredSystemsWithExtraModules [

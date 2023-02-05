@@ -121,5 +121,9 @@ pub fn serialize<S: Serialize>(value: S) -> Result<String, Error> {
 
 #[test]
 fn test() {
-	assert_eq!(serialize("Hello\nworld").unwrap(), "\"Hello\\nworld\"");
+	assert_eq!(serialize("Hello\nworld").unwrap(), "\"Hello\\nworld\"\n");
+}
+pub fn format_nix(value: &String) -> String {
+	let (_, out) = alejandra::format::in_memory("".to_owned(), value.to_owned());
+	out
 }

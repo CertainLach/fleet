@@ -1,6 +1,17 @@
+use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
+use nixlike::format_nix;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use tempfile::TempDir;
+use tokio::{
+	fs::{self, File},
+	io::AsyncWriteExt,
+	process::Command,
+};
+
+use crate::command::CommandExt;
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -52,7 +63,7 @@ fn as_z85<S>(key: &[u8], serializer: S) -> Result<S::Ok, S::Error>
 where
 	S: Serializer,
 {
-	serializer.serialize_str(&z85::encode(&key))
+	serializer.serialize_str(&z85::encode(key))
 }
 
 fn from_z85<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
@@ -61,5 +72,39 @@ where
 {
 	use serde::de::Error;
 	String::deserialize(deserializer)
-		.and_then(|string| z85::decode(&string).map_err(|err| Error::custom(err.to_string())))
+		.and_then(|string| z85::decode(string).map_err(|err| Error::custom(err.to_string())))
+}
+
+pub async fn dummy_flake() -> Result<TempDir> {
+	let data_str = fs::read_to_string("fleet.nix").await?;
+
+	let mut cmd = Command::new("nix");
+	cmd.arg("flake").arg("metadata").arg("--json");
+
+	let flake_dir = tempfile::tempdir()?;
+	let mut flake_nix = flake_dir.path().to_path_buf();
+	flake_nix.push("flake.nix");
+	// flake_dir
+
+	File::create(&flake_nix)
+		.await?
+		.write_all(
+			format_nix(&format!(
+				"
+						{{
+							outputs = {{self, ...}}: {{
+								data = {data_str};
+							}};
+						}}
+					"
+			))
+			.as_bytes(),
+		)
+		.await?;
+
+	// std::thread::sleep(Duration::MAX);
+	// flake_dir.close()
+	// FIXME
+	dbg!(&flake_nix);
+	Ok(flake_dir)
 }

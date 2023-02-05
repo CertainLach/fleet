@@ -128,8 +128,15 @@ impl CommandExt for Command {
 							};
 							match log {
 								NixLog::Msg { msg, raw_msg, .. } => {
-									if !(msg.ends_with(" is dirty") && msg.contains("warning:") && msg.contains(" Git tree ")) {
-										info!(target: "nix", "{}", raw_msg.unwrap_or(msg))
+									if !(msg.starts_with("\u{1b}[35;1mwarning:\u{1b}[0m Git tree '") && msg.ends_with("' is dirty"))
+										&& !msg.starts_with("\u{1b}[35;1mwarning:\u{1b}[0m not writing modified lock file of flake")
+										&& msg != "\u{1b}[35;1mwarning:\u{1b}[0m \u{1b}[31;1merror:\u{1b}[0m SQLite database '\u{1b}[35;1m/nix/var/nix/db/db.sqlite\u{1b}[0m' is busy" {
+										if let Some(raw_msg) = raw_msg {
+											info!(target: "nix", "{raw_msg}\n{msg}")
+										}else {
+											info!(target: "nix", "{msg}")
+
+										}
 									}
 								},
 								NixLog::Start { ref fields, typ, .. } if typ == 105 && !fields.is_empty() => {
@@ -162,6 +169,9 @@ impl CommandExt for Command {
 								}
 								NixLog::Start { text, level: 1, typ: 111, .. } if text.starts_with("waiting for a machine to build ") => {
 									// Useless repeating notification about build
+								}
+								NixLog::Start { text, level: 3, typ: 111, .. } if text.starts_with("resolved derivation:  ") => {
+									// CA resolved
 								}
 								NixLog::Stop { .. } => {},
 								NixLog::Result { .. } => {},

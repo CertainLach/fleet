@@ -2,6 +2,7 @@ use std::{
 	cell::{Ref, RefCell, RefMut},
 	env::current_dir,
 	ffi::{OsStr, OsString},
+	io::Write,
 	ops::Deref,
 	path::PathBuf,
 	sync::Arc,
@@ -10,15 +11,20 @@ use std::{
 use anyhow::Result;
 use clap::{ArgGroup, Parser};
 use serde::de::DeserializeOwned;
+use tempfile::{NamedTempFile, TempDir};
 use tokio::process::Command;
 
-use crate::{command::CommandExt, fleetdata::FleetData};
+use crate::{
+	command::CommandExt,
+	fleetdata::{dummy_flake, FleetData},
+};
 
 pub struct FleetConfigInternals {
 	pub local_system: String,
 	pub directory: PathBuf,
 	pub opts: FleetOpts,
 	pub data: RefCell<FleetData>,
+	pub nix_args: Vec<OsString>,
 }
 
 #[derive(Clone)]
@@ -80,7 +86,27 @@ impl Config {
 		Command::new("nix")
 			.arg("eval")
 			.arg(self.configuration_attr_name("configuredHosts"))
-			.args(&["--apply", "builtins.attrNames", "--json", "--show-trace"])
+			.args(["--apply", "builtins.attrNames", "--json", "--show-trace"])
+			.args(&self.nix_args)
+			.run_nix_json()
+			.await
+	}
+	pub async fn shared_config_attr<T: DeserializeOwned>(&self, attr: &str) -> Result<T> {
+		Command::new("nix")
+			.arg("eval")
+			.arg(self.configuration_attr_name(&format!("configUnchecked.{}", attr)))
+			.args(["--json", "--show-trace"])
+			.args(&self.nix_args)
+			.run_nix_json()
+			.await
+	}
+	pub async fn shared_config_attr_names(&self, attr: &str) -> Result<Vec<String>> {
+		Command::new("nix")
+			.arg("eval")
+			.arg(self.configuration_attr_name(&format!("configUnchecked.{}", attr)))
+			.args(["--apply", "builtins.attrNames"])
+			.args(["--json", "--show-trace"])
+			.args(&self.nix_args)
 			.run_nix_json()
 			.await
 	}
@@ -93,7 +119,8 @@ impl Config {
 					host, attr
 				)),
 			)
-			.args(&["--json", "--show-trace"])
+			.args(["--json", "--show-trace"])
+			.args(&self.nix_args)
 			.run_nix_json()
 			.await
 	}
@@ -106,16 +133,18 @@ impl Config {
 	}
 
 	pub fn save(&self) -> Result<()> {
-		let mut fleet_data_path = self.directory.clone();
-		fleet_data_path.push("fleet.nix");
+		let mut tempfile = NamedTempFile::new_in(self.directory.clone())?;
 		let data = nixlike::serialize(&self.data() as &FleetData)?;
-		std::fs::write(
-			fleet_data_path,
+		tempfile.write_all(
 			format!(
 				"# This file contains fleet state and shouldn't be edited by hand\n\n{}\n",
 				data
-			),
+			)
+			.as_bytes(),
 		)?;
+		let mut fleet_data_path = self.directory.clone();
+		fleet_data_path.push("fleet.nix");
+		tempfile.persist(fleet_data_path)?;
 		Ok(())
 	}
 }
@@ -143,7 +172,7 @@ pub struct FleetOpts {
 }
 
 impl FleetOpts {
-	pub fn build(mut self) -> Result<Config> {
+	pub async fn build(mut self, nix_args: Vec<OsString>) -> Result<Config> {
 		let local_system = self.local_system.clone();
 		if self.localhost.is_none() {
 			self.localhost
@@ -161,6 +190,7 @@ impl FleetOpts {
 			directory,
 			data,
 			local_system,
+			nix_args,
 		})))
 	}
 }

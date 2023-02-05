@@ -9,6 +9,7 @@ let
           if not matches expectedOwners - then this secret is considered outdated, and
           should be regenerated/reencrypted
         '';
+        default = [ ];
       };
       expectedOwners = mkOption {
         type = listOf str;
@@ -80,7 +81,7 @@ in
     assertions = mapAttrsToList
       (name: secret: {
         assertion = builtins.sort (a: b: a < b) secret.owners == builtins.sort (a: b: a < b) secret.expectedOwners;
-        message = "Shared secret ${name} is expected to be encrypted for ${builtins.toJSON secret.expectedOwners}, but it is encrypted for ${builtins.toJSON secret.owners}";
+        message = "Shared secret ${name} is expected to be encrypted for ${builtins.toJSON secret.expectedOwners}, but it is encrypted for ${builtins.toJSON secret.owners}. Run fleet secrets regenerate to fix";
       })
       config.sharedSecrets;
     hosts = hostsToAttrs (host: {

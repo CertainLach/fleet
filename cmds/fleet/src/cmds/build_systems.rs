@@ -8,9 +8,6 @@ use tracing::{error, field, info, info_span, warn, Instrument};
 
 #[derive(Parser, Clone)]
 pub struct BuildSystems {
-	/// Jobs to run locally
-	#[clap(long)]
-	jobs: Option<usize>,
 	/// Do not continue on error
 	#[clap(long)]
 	fail_fast: bool,
@@ -19,13 +16,6 @@ pub struct BuildSystems {
 	privileged_build: bool,
 	#[clap(subcommand)]
 	subcommand: Subcommand,
-
-	/// --builders arg for nix
-	#[clap(long)]
-	builders: Option<String>,
-	/// --show-trace arg for nix
-	#[structopt(long)]
-	show_trace: bool,
 }
 
 enum UploadAction {
@@ -126,7 +116,7 @@ impl BuildSystems {
 			Command::new("nix")
 		};
 		nix_build
-			.args(&[
+			.args([
 				"build",
 				"--impure",
 				"--json",
@@ -140,21 +130,8 @@ impl BuildSystems {
 					"buildSystems.{}.{host}",
 					action.build_attr()
 				)),
-			);
-
-		if self.show_trace {
-			nix_build.arg("--show-trace");
-		}
-		if let Some(builders) = &self.builders {
-			nix_build.arg("--builders").arg(builders);
-		}
-		if let Some(jobs) = &self.jobs {
-			nix_build.arg("--max-jobs");
-			nix_build.arg(format!("{}", jobs));
-		}
-		if !self.fail_fast {
-			nix_build.arg("--keep-going");
-		}
+			)
+			.args(&config.nix_args);
 
 		nix_build.run_nix().await?;
 		let built = std::fs::canonicalize(built)?;
@@ -166,7 +143,7 @@ impl BuildSystems {
 					let mut tries = 0;
 					loop {
 						match Command::new("nix")
-							.args(&["copy", "--to"])
+							.args(["copy", "--to"])
 							.arg(format!("ssh://root@{}", host))
 							.arg(&built)
 							.inherit_stdio()
@@ -188,7 +165,7 @@ impl BuildSystems {
 						info!("switching generation");
 						config
 							.command_on(&host, "nix-env", true)
-							.args(&["-p", "/nix/var/nix/profiles/system", "--set"])
+							.args(["-p", "/nix/var/nix/profiles/system", "--set"])
 							.arg(&built)
 							.inherit_stdio()
 							.run()
@@ -219,18 +196,10 @@ impl BuildSystems {
 					Command::new("nix")
 				};
 				nix_build
-					.args(&["build", "--impure", "--no-link", "--out-link"])
+					.args(["build", "--impure", "--no-link", "--out-link"])
 					.arg(&out)
-					.arg(
-						config.configuration_attr_name(&format!("buildSystems.sdImage.{}", host,)),
-					);
-				if let Some(builders) = &self.builders {
-					nix_build.arg("--builders").arg(builders);
-				}
-				if let Some(jobs) = &self.jobs {
-					nix_build.arg("--max-jobs");
-					nix_build.arg(format!("{}", jobs));
-				}
+					.arg(config.configuration_attr_name(&format!("buildSystems.sdImage.{}", host,)))
+					.args(&config.nix_args);
 				if !self.fail_fast {
 					nix_build.arg("--keep-going");
 				}
@@ -250,21 +219,15 @@ impl BuildSystems {
 					Command::new("nix")
 				};
 				nix_build
-					.args(&["build", "--impure", "--no-link", "--out-link"])
+					.args(["build", "--impure", "--no-link", "--out-link"])
 					.arg(&out)
 					.arg(
 						config.configuration_attr_name(&format!(
 							"buildSystems.installationCd.{}",
 							host,
 						)),
-					);
-				if let Some(builders) = &self.builders {
-					nix_build.arg("--builders").arg(builders);
-				}
-				if let Some(jobs) = &self.jobs {
-					nix_build.arg("--max-jobs");
-					nix_build.arg(format!("{}", jobs));
-				}
+					)
+					.args(&config.nix_args);
 				if !self.fail_fast {
 					nix_build.arg("--keep-going");
 				}

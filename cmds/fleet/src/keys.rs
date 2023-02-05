@@ -35,6 +35,16 @@ impl Config {
 			Ok(key)
 		}
 	}
+	/// Insecure, requires root
+	pub async fn identity(&self, host: &str) -> anyhow::Result<age::ssh::Identity> {
+		warn!("Loading private key for {host}");
+		let key = self
+			.command_on(host, "cat", true)
+			.arg("/etc/ssh/ssh_host_ed25519_key")
+			.run_string()
+			.await?;
+		Ok(age::ssh::Identity::from_buffer(key.as_bytes(), None)?)
+	}
 	pub async fn recipient(&self, host: &str) -> anyhow::Result<age::ssh::Recipient> {
 		let key = self.key(host).await?;
 		age::ssh::Recipient::from_str(&key).map_err(|e| anyhow!("parse recipient error: {:?}", e))

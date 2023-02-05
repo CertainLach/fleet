@@ -59,8 +59,9 @@ async fn main() -> Result<()> {
 		.map_err(|e| anyhow!("Failed to initialize logger: {}", e))?;
 
 	info!("Starting");
-	let opts = RootOpts::parse();
-	let config = opts.fleet_opts.build()?;
+	let mut os_args = std::env::args_os();
+	let opts = RootOpts::parse_from((&mut os_args).take_while(|v| v != "--"));
+	let config = opts.fleet_opts.build(os_args.collect()).await?;
 
 	match run_command(&config, opts.command).await {
 		Ok(()) => {
