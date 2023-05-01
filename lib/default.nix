@@ -53,13 +53,21 @@
         inherit configuredHosts configuredSecrets configuredSystems;
         configUnchecked = root.config;
         buildSystems = {
-          toplevel = builtins.mapAttrs (_name: value: value.config.system.build.toplevel) (configuredSystemsWithExtraModules [ ]);
+          toplevel = builtins.mapAttrs (_name: value: value.config.system.build.toplevel) (configuredSystemsWithExtraModules [
+            ({...}: {
+              buildTarget = "toplevel";
+            })
+          ]);
           sdImage = builtins.mapAttrs (_name: value: value.config.system.build.sdImage) (configuredSystemsWithExtraModules [
-            (nixpkgs + "/nixos/modules/installer/sd-card/sd-image-aarch64-installer.nix")
+            #(nixpkgs + "/nixos/modules/installer/sd-card/sd-image-aarch64-installer.nix")
+            ({...}: {
+              buildTarget = "sd-image";
+            })
           ]);
           installationCd = builtins.mapAttrs (_name: value: value.config.system.build.isoImage) (configuredSystemsWithExtraModules [
             (nixpkgs + "/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix")
             ({ lib, ... }: {
+              buildTarget = "installation-cd";
               # Needed for https://github.com/NixOS/nixpkgs/issues/58959
               boot.supportedFilesystems = lib.mkForce [ "btrfs" "reiserfs" "vfat" "f2fs" "xfs" "ntfs" "cifs" ];
             })

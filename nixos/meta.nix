@@ -24,6 +24,9 @@ with lib;
       };
       description = "Network definition of host";
     };
+    buildTarget = mkOption {
+      type = enum ["toplevel" "sd-image" "installation-cd"];
+    };
   };
   config = {
     tags = [ "all" ];

@@ -133,7 +133,14 @@ impl BuildSystems {
 			)
 			.args(&config.nix_args);
 
-		nix_build.run_nix().await?;
+		nix_build.run_nix().await.map_err(|e| {
+			if action.build_attr() == "sdImage" {
+				info!("sd-image build failed");
+				info!("Make sure you have imported modulesPath/installer/sd-card/sd-image-<arch>[-installer].nix (For installer, you may want to check config)");
+				info!("This module was automatically imported before, but was removed for better customization")
+			}
+			e
+		})?;
 		let built = std::fs::canonicalize(built)?;
 
 		match action {
