@@ -1,4 +1,4 @@
-{ rustPlatform }:
+{ rustPlatform, lib }:
 
 rustPlatform.buildRustPackage rec {
   pname = "fleet-install-secrets";
@@ -9,5 +9,8 @@ rustPlatform.buildRustPackage rec {
   cargoBuildFlags = "-p ${pname}";
   cargoLock = {
     lockFile = ../Cargo.lock;
+    outputHashes = {
+      "alejandra-3.0.0" = "sha256-YSdHsJ73G7TEFzbmpZ2peuMefIa9/vNB2g+xdiyma3U=";
+    };
   };
 }

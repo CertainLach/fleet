@@ -15,7 +15,7 @@
           inherit system; overlays = [ (import rust-overlay) ];
         };
       llvmPkgs = pkgs.buildPackages.llvmPackages_11;
-      rust = (pkgs.rustChannelOf { date = "2022-12-02"; channel = "nightly"; }).default.override { extensions = [ "rust-src" ]; };
+      rust = (pkgs.rustChannelOf { date = "2022-12-02"; channel = "nightly"; }).default.override { extensions = [ "rust-src" "rust-analyzer" ]; };
       rustPlatform = pkgs.makeRustPlatform { cargo = rust; rustc = rust; };
     in
     {

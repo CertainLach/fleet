@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-alejandra = "1.5.0"
-rnix = "=0.10.2"
+alejandra = {git = "https://github.com/kamadorueda/alejandra"}
+rnix = "0.10.2"
 linked-hash-map = "0.5.4"
 peg = "0.8.0"
 serde = "1.0.130"
