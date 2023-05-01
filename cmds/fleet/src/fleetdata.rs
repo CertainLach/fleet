@@ -1,8 +1,7 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use nixlike::format_nix;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use tempfile::TempDir;
 use tokio::{
@@ -10,8 +9,6 @@ use tokio::{
 	io::AsyncWriteExt,
 	process::Command,
 };
-
-use crate::command::CommandExt;
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -34,16 +31,18 @@ pub struct FleetData {
 	pub host_secrets: BTreeMap<String, BTreeMap<String, FleetSecret>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+#[must_use]
 pub struct FleetSharedSecret {
 	pub owners: Vec<String>,
 	#[serde(flatten)]
 	pub secret: FleetSecret,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+#[must_use]
 pub struct FleetSecret {
 	#[serde(default)]
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -75,6 +74,8 @@ where
 		.and_then(|string| z85::decode(string).map_err(|err| Error::custom(err.to_string())))
 }
 
+/// Isn't used yet
+#[allow(dead_code)]
 pub async fn dummy_flake() -> Result<TempDir> {
 	let data_str = fs::read_to_string("fleet.nix").await?;
 

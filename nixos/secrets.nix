@@ -89,9 +89,10 @@ in
     };
   };
   config = {
+    environment.systemPackages = with pkgs; [pkgs.fleet-install-secrets];
     system.activationScripts.decryptSecrets = stringAfter [ "users" "groups" "specialfs" ] ''
       1>&2 echo "setting up secrets"
-      ${pkgs.fleet-install-secrets}/bin/fleet-install-secrets ${secretsFile}
+      ${pkgs.fleet-install-secrets}/bin/fleet-install-secrets install ${secretsFile}
     '';
   };
 }

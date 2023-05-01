@@ -20,9 +20,18 @@ let
         '';
         default = [ ];
       };
+      ownerDependent = mkOption {
+        type = bool;
+        description = "Is this secret owner-dependent, and needs to be regenerated on ownership set change, or it may be just reencrypted";
+      };
       generator = mkOption {
-        type = package;
-        description = "Derivation to execute for secret generation";
+        type = nullOr package;
+        description = ''
+          Derivation to execute for secret generation
+
+          If null - may only be created manually
+        '';
+        default = null;
       };
       expireIn = mkOption {
         type = nullOr int;

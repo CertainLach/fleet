@@ -8,15 +8,15 @@ use std::{
 	sync::Arc,
 };
 
-use anyhow::Result;
+use anyhow::{Result, bail, Context};
 use clap::{ArgGroup, Parser};
 use serde::de::DeserializeOwned;
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::NamedTempFile;
 use tokio::process::Command;
 
 use crate::{
 	command::CommandExt,
-	fleetdata::{dummy_flake, FleetData},
+	fleetdata::{FleetData, FleetSecret, FleetSharedSecret},
 };
 
 pub struct FleetConfigInternals {
@@ -125,11 +125,91 @@ impl Config {
 			.await
 	}
 
-	pub fn data(&self) -> Ref<FleetData> {
+	pub(super) fn data(&self) -> Ref<FleetData> {
 		self.data.borrow()
 	}
-	pub fn data_mut(&self) -> RefMut<FleetData> {
+	pub(super) fn data_mut(&self) -> RefMut<FleetData> {
 		self.data.borrow_mut()
+	}
+
+	pub fn list_shared(&self) -> Vec<String> {
+		let data = self.data();
+		data.shared_secrets.keys().cloned().collect()
+	}
+	pub fn has_shared(&self, name: &str) -> bool {
+		let data = self.data();
+		data.shared_secrets.contains_key(name)
+	}
+	pub fn replace_shared(&self, name: String, shared: FleetSharedSecret) {
+		let mut data = self.data_mut();
+		data.shared_secrets.insert(name.to_owned(), shared);
+	}
+	pub fn remove_shared(&self, secret: &str) {
+		let mut data = self.data_mut();
+		data.shared_secrets.remove(secret);
+	}
+
+	pub fn list_secrets(&self, host: &str) -> Vec<String> {
+		let data = self.data();
+		let Some(host_secrets) = data.host_secrets.get(host) else {
+			return Vec::new(); 
+		};
+		host_secrets.keys().cloned().collect()
+	}
+	pub fn has_secret(&self, host: &str, secret: &str) -> bool {
+		let data = self.data();
+		let Some(host_secrets) = data.host_secrets.get(host) else {
+			return false; 
+		};
+		host_secrets.contains_key(secret)
+	}
+	pub fn insert_secret(&self, host: &str, secret: String, value: FleetSecret) {
+		let mut data = self.data_mut();
+		let host_secrets = data.host_secrets.entry(host.to_owned()).or_default();
+		host_secrets.insert(secret, value);
+	}
+
+	pub async fn decrypt_on_host(&self, host: &str, data: Vec<u8>) -> Result<Vec<u8>>{
+		let data = z85::encode(&data);
+		let encoded = self.command_on(host, "fleet-install-secrets", true)
+			.arg("decrypt")
+			.arg("--secret")
+			.arg(data).run_string().await.context("failed to call remote host for decrypt")?.trim().to_owned();
+		Ok(z85::decode(encoded).context("bad encoded data? outdated host?")?)
+	}
+	pub async fn reencrypt_on_host(&self, host: &str, data: Vec<u8>, targets: Vec<String>) -> Result<Vec<u8>>{
+		let data = z85::encode(&data);
+		let mut recmd = self.command_on(host, "fleet-install-secrets", true);
+		recmd
+			.arg("reencrypt")
+			.arg("--secret")
+			.arg(format!("\"{}\"", data.replace('$', "\\$")));
+		for target in targets {
+			recmd.arg("--targets");
+			recmd.arg(format!("\"{target}\""));
+		}
+		let encoded = recmd.run_string().await.context("failed to call remote host for decrypt")?.trim().to_owned();
+		Ok(z85::decode(encoded).context("bad encoded data? outdated host?")?)
+	}
+
+	#[must_use]
+	pub fn host_secret(&self, host: &str, secret: &str) -> Result<FleetSecret> {
+		let data = self.data();
+		let Some(host_secrets) = data.host_secrets.get(host) else {
+            bail!("no secrets for machine {host}");
+        };
+		let Some(secret) = host_secrets.get(secret) else {
+            bail!("machine {host} has no secret {secret}");
+        };
+		Ok(secret.clone())
+	}
+	#[must_use]
+	pub fn shared_secret(&self, secret: &str) -> Result<FleetSharedSecret> {
+		let data = self.data();
+		let Some(secret) = data.shared_secrets.get(secret) else {
+			bail!("no shared secret {secret}");
+		};
+		Ok(secret.clone())
 	}
 
 	pub fn save(&self) -> Result<()> {

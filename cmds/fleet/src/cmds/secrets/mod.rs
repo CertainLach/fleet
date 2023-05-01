@@ -12,6 +12,7 @@ use std::{
 	iter,
 	path::PathBuf,
 };
+use tokio::fs::read_to_string;
 use tracing::{info, warn};
 
 #[derive(Parser)]
@@ -50,19 +51,30 @@ pub enum Secrets {
 	Read {
 		name: String,
 		machine: String,
+		#[clap(long)]
+		plaintext: bool,
 	},
 	UpdateShared {
 		name: String,
 
+		#[clap(long)]
 		machines: Option<Vec<String>>,
 
+		#[clap(long)]
 		add_machines: Vec<String>,
+		#[clap(long)]
 		remove_machines: Vec<String>,
 
 		/// Which host should we use to decrypt
+		#[clap(long)]
 		prefer_identities: Vec<String>,
 	},
-	Regenerate,
+	Regenerate {
+		/// Which host should we use to decrypt, in case if reencryption is required, without
+		/// regeneration
+		#[clap(long)]
+		prefer_identities: Vec<String>,
+	},
 }
 
 impl Secrets {
@@ -110,11 +122,10 @@ impl Secrets {
 					}
 				};
 
-				let mut data = config.data_mut();
-				if data.shared_secrets.contains_key(&name) && !force {
+				if config.has_shared(&name) && !force {
 					bail!("secret already defined");
 				}
-				data.shared_secrets.insert(
+				config.replace_shared(
 					name,
 					FleetSharedSecret {
 						owners: machines,
@@ -123,7 +134,7 @@ impl Secrets {
 							secret,
 							public: match (public, public_file) {
 								(Some(v), None) => Some(v),
-								(None, Some(v)) => Some(std::fs::read_to_string(v)?),
+								(None, Some(v)) => Some(read_to_string(v).await?),
 								(Some(_), Some(_)) => {
 									bail!("only public or public_file should be set")
 								}
@@ -159,12 +170,11 @@ impl Secrets {
 					encrypted
 				};
 
-				let mut data = config.data_mut();
-				let host_secrets = data.host_secrets.entry(machine).or_default();
-				if host_secrets.contains_key(&name) && !force {
+				if config.has_secret(&machine, &name) && !force {
 					bail!("secret already defined");
 				}
-				host_secrets.insert(
+				config.insert_secret(
+					&machine,
 					name,
 					FleetSecret {
 						expire_at: None,
@@ -180,34 +190,22 @@ impl Secrets {
 			}
 			// TODO: Instead of using sudo, decode secret on remote machine
 			#[allow(clippy::await_holding_refcell_ref)]
-			Secrets::Read { name, machine } => {
-				let data = config.data();
-
-				let Some(host_secrets) = data.host_secrets.get(&machine) else {
-                    bail!("no secrets for machine {machine}");
-                };
-				let Some(secret) = host_secrets.get(&name) else {
-                    bail!("machine {machine} has no secret {name}");
-                };
+			Secrets::Read {
+				name,
+				machine,
+				plaintext,
+			} => {
+				let secret = config.host_secret(&machine, &name)?;
 				if secret.secret.is_empty() {
 					bail!("no secret {name}");
 				}
-				let identity = config.identity(&machine).await?;
-				let decryptor = Decryptor::new(Cursor::new(&secret.secret))?;
-				let decryptor = match decryptor {
-					Decryptor::Recipients(r) => r,
-					Decryptor::Passphrase(_) => bail!("should be recipients"),
-				};
-				let mut decryptor = decryptor
-					.decrypt(iter::once(&identity as &dyn age::Identity))
-					.context("failed to decrypt, wrong key?")?;
-
-				let mut decrypted = Vec::new();
-				decryptor
-					.read_to_end(&mut decrypted)
-					.context("failed to decrypt")?;
-				// secret.secret
-				std::io::stdout().lock().write_all(&decrypted)?;
+				let data = config.decrypt_on_host(&machine, secret.secret).await?;
+				if plaintext {
+					let s = String::from_utf8(data).context("output is not utf8")?;
+					print!("{s}");
+				} else {
+					println!("{}", z85::encode(&data));
+				}
 			}
 			Secrets::UpdateShared {
 				name,
@@ -216,20 +214,18 @@ impl Secrets {
 				mut remove_machines,
 				prefer_identities,
 			} => {
-				let mut data = config.data_mut();
 				if machines.is_none() && add_machines.is_empty() && remove_machines.is_empty() {
 					bail!("no operation");
 				}
 
-				let Some(mut secret) = data.shared_secrets.get_mut(&name) else {
-                    bail!("no shared secret {name}");
-                };
+				let mut secret = config.shared_secret(&name)?;
 				if secret.secret.secret.is_empty() {
 					bail!("no secret");
 				}
 
 				let initial_machines = secret.owners.clone();
 				let mut target_machines = secret.owners.clone();
+				info!("Currently encrypted for {initial_machines:?}");
 
 				// ensure!(machines.is_some() || !add_machines.is_empty() || )
 				if let Some(machines) = machines {
@@ -254,20 +250,28 @@ impl Secrets {
 						removed = true;
 					}
 					if !removed {
-						bail!("secret is not enabled for {machine}");
+						warn!("secret is not enabled for {machine}");
 					}
 				}
 				for machine in &add_machines {
 					if target_machines.iter().any(|m| m == machine) {
 						warn!("secret is already added to {machine}");
+					} else {
+						target_machines.push(machine.to_owned());
 					}
 				}
-				if remove_machines.is_empty() {
+				if !remove_machines.is_empty() {
 					warn!("secret will not be regenerated for removed machines, and until host rebuild, they will still possess the ability to decode secret");
 				}
+
 				if target_machines.is_empty() {
 					info!("no machines left for secret, removing it");
-					data.shared_secrets.remove(&name);
+					config.remove_shared(&name);
+					return Ok(());
+				}
+
+				if target_machines == initial_machines {
+					warn!("secret owners are already correct");
 					return Ok(());
 				}
 
@@ -282,51 +286,34 @@ impl Secrets {
                     bail!("no available holder found");
                 };
 				let target_recipients = futures::stream::iter(&target_machines)
-					.flat_map(|m| futures::stream::once(config.recipient(m)))
+					.then(|m| async { config.key(m).await })
 					.collect::<Vec<_>>()
-					.await
-					.into_iter()
-					.map(|v| v.map(|v| Box::new(v) as Box<dyn age::Recipient + Send>))
-					.collect::<Result<Vec<_>>>()?;
+					.await;
+				let target_recipients =
+					target_recipients.into_iter().collect::<Result<Vec<_>>>()?;
 
-				let identity = config.identity(identity_holder).await?;
-				let decryptor = Decryptor::new(Cursor::new(&secret.secret.secret))?;
-				let decryptor = match decryptor {
-					Decryptor::Recipients(r) => r,
-					Decryptor::Passphrase(_) => bail!("should be recipients"),
-				};
-				let mut decryptor = decryptor
-					.decrypt(iter::once(&identity as &dyn age::Identity))
-					.context("failed to decrypt, wrong key?")?;
+				let encrypted = config
+					.reencrypt_on_host(&identity_holder, secret.secret.secret, target_recipients)
+					.await?;
 
-				let mut decrypted = Vec::new();
-				decryptor
-					.read_to_end(&mut decrypted)
-					.context("failed to decrypt")?;
-
-				let mut encrypted = vec![];
-				let mut encryptor = Encryptor::with_recipients(target_recipients)
-					.expect("recipients provided")
-					.wrap_output(&mut encrypted)?;
-				io::copy(&mut Cursor::new(decrypted), &mut encryptor)?;
-				encryptor.finish()?;
-
+				secret.owners = target_machines;
 				secret.secret.secret = encrypted;
+				config.replace_shared(name, secret);
 			}
-			Secrets::Regenerate => {
-				// config.data_mut().shared_secrets
+			Secrets::Regenerate { prefer_identities } => {
 				{
 					let expected_shared_set =
 						config.shared_config_attr_names("sharedSecrets").await?;
 					let expected_shared_set = expected_shared_set.iter().collect::<HashSet<_>>();
-					let shared_set = config.data();
-					let shared_set = shared_set.shared_secrets.keys().collect::<HashSet<_>>();
+					let shared_set = config.list_shared();
+					let shared_set = shared_set.iter().collect::<HashSet<_>>();
 					for removed in expected_shared_set.difference(&shared_set) {
 						warn!("secret needs to be generated: {removed}")
 					}
 				}
 				let mut to_remove = Vec::new();
-				for (name, data) in &config.data().shared_secrets {
+				for name in &config.list_shared() {
+					let mut data = config.shared_secret(name)?;
 					let expected_owners: Vec<String> = config
 						.shared_config_attr(&format!("sharedSecrets.\"{name}\".expectedOwners"))
 						.await?;
@@ -337,12 +324,54 @@ impl Secrets {
 					}
 					let set = data.owners.iter().collect::<HashSet<_>>();
 					let expected_set = expected_owners.iter().collect::<HashSet<_>>();
+					let should_remove = set.difference(&expected_set).next().is_some();
 					if set != expected_set {
 						warn!("reconfiguring owners for {name}");
+						let generator: Option<String> = config
+							.shared_config_attr(&format!("sharedSecrets.\"{name}\".generator"))
+							.await?;
+						// TODO: if !.owner_dependent
+						if let Some(str) = generator {
+							todo!("regenerate")
+						} else {
+							if should_remove {
+								warn!("secret will not be regenerated for removed machines, and until host rebuild, they will still possess the ability to decode secret");
+							}
+
+							let identity_holder = if !prefer_identities.is_empty() {
+								prefer_identities
+									.iter()
+									.find(|i| data.owners.iter().any(|s| s == *i))
+							} else {
+								data.owners.first()
+							};
+							let Some(identity_holder) = identity_holder else {
+								bail!("no available holder found");
+							};
+
+							let target_recipients = futures::stream::iter(&expected_owners)
+								.then(|m| async { config.key(m).await })
+								.collect::<Vec<_>>()
+								.await;
+							let target_recipients =
+								target_recipients.into_iter().collect::<Result<Vec<_>>>()?;
+
+							let encrypted = config
+								.reencrypt_on_host(
+									&identity_holder,
+									data.secret.secret,
+									target_recipients,
+								)
+								.await?;
+
+							data.secret.secret = encrypted;
+							data.owners = expected_owners;
+							config.replace_shared(name.to_owned(), data);
+						}
 					}
 				}
 				for k in to_remove {
-					config.data_mut().shared_secrets.remove(&k);
+					config.remove_shared(&k);
 				}
 			}
 		}

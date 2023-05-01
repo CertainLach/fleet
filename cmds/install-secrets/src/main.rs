@@ -1,21 +1,66 @@
-use age::Decryptor;
+use age::{ssh::Identity as SshIdentity, ssh::Recipient as SshRecipient, Decryptor};
+use age::{Encryptor, Identity, Recipient};
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use log::{error, info, warn};
 use nix::sys::stat::Mode;
 use nix::unistd::{chown, Group, User};
 use serde::{Deserialize, Deserializer};
+use std::fmt::{self, Display};
 use std::fs::{self, File};
 use std::io::{self, Cursor, Read, Write};
 use std::iter;
 use std::os::unix::prelude::PermissionsExt;
-use std::str::from_utf8;
+use std::path::Path;
+use std::str::{from_utf8, FromStr};
 use std::{collections::HashMap, path::PathBuf};
+
+#[derive(Clone, Debug)]
+struct SecretWrapper(Vec<u8>);
+impl Display for SecretWrapper {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let encoded = z85::encode(&self.0);
+		write!(f, "{encoded}")
+	}
+}
+impl FromStr for SecretWrapper {
+	type Err = z85::DecodeError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		z85::decode(s).map(Self)
+	}
+}
+impl<'de> Deserialize<'de> for SecretWrapper {
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		let v = String::deserialize(deserializer)?;
+		let de = z85::decode(v).map_err(|err| serde::de::Error::custom(err.to_string()))?;
+		Ok(Self(de))
+	}
+}
 
 #[derive(Parser)]
 #[clap(author)]
-struct Opts {
-	data: PathBuf,
+enum Opts {
+	/// Install secrets from json specification
+	Install { data: PathBuf },
+	/// Reencrypt secret using host key, outputting in z85 encoded string
+	Reencrypt {
+		#[clap(long)]
+		secret: SecretWrapper,
+		#[clap(long)]
+		targets: Vec<String>,
+	},
+	/// Decrypt secret using host key, outputting in z85 encoded string
+	Decrypt {
+		#[clap(long)]
+		secret: SecretWrapper,
+		/// Shoult decoded output be printed as plaintext, instead of z85?
+		#[clap(long)]
+		plaintext: bool,
+	},
 }
 
 #[derive(Deserialize)]
@@ -25,8 +70,7 @@ struct DataItem {
 	mode: String,
 	owner: String,
 
-	#[serde(deserialize_with = "from_z85")]
-	secret: Option<Vec<u8>>,
+	secret: Option<SecretWrapper>,
 	public: Option<String>,
 
 	public_path: PathBuf,
@@ -36,21 +80,45 @@ struct DataItem {
 	stable_secret_path: PathBuf,
 }
 
-fn from_z85<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
-where
-	D: Deserializer<'de>,
-{
-	use serde::de::Error;
-	if let Some(v) = <Option<String>>::deserialize(deserializer)? {
-		Ok(Some(
-			z85::decode(v).map_err(|err| Error::custom(err.to_string()))?,
-		))
-	} else {
-		Ok(None)
-	}
-}
-
 type Data = HashMap<String, DataItem>;
+
+fn decrypt(input: &SecretWrapper, identity: &dyn Identity) -> Result<Vec<u8>> {
+	let mut input = Cursor::new(&input.0);
+	let decryptor = Decryptor::new(&mut input).context("failed to init decryptor")?;
+	let decryptor = match decryptor {
+		Decryptor::Recipients(r) => r,
+		Decryptor::Passphrase(_) => bail!("should be recipients"),
+	};
+	let mut decryptor = decryptor
+		.decrypt(iter::once(identity as &dyn age::Identity))
+		.context("failed to decrypt, wrong key?")?;
+
+	let mut decrypted = Vec::new();
+	decryptor
+		.read_to_end(&mut decrypted)
+		.context("failed to decrypt")?;
+	Ok(decrypted)
+}
+fn encrypt(input: &[u8], targets: Vec<String>) -> Result<SecretWrapper> {
+	let recipients = targets
+		.into_iter()
+		.map(|t| {
+			SshRecipient::from_str(&t).map_err(|e| anyhow!("failed to parse recipient: {e:?}"))
+		})
+		.collect::<Result<Vec<SshRecipient>>>()?;
+	let recipients = recipients
+		.into_iter()
+		.map(|v| Box::new(v) as Box<dyn Recipient + Send>)
+		.collect::<Vec<_>>();
+	let mut encrypted = vec![];
+	let mut encryptor = Encryptor::with_recipients(recipients)
+		.expect("recipients provided")
+		.wrap_output(&mut encrypted)
+		.expect("constructor should not fail");
+	io::copy(&mut Cursor::new(input), &mut encryptor).expect("copy should not fail");
+	encryptor.finish().context("failed to finish encryption")?;
+	Ok(SecretWrapper(encrypted))
+}
 
 fn init_secret(identity: &age::ssh::Identity, value: DataItem) -> Result<()> {
 	if let Some(public) = &value.public {
@@ -93,23 +161,7 @@ fn init_secret(identity: &age::ssh::Identity, value: DataItem) -> Result<()> {
 	let mut hashed = File::create(&value.secret_path)?;
 
 	// File is owned by root, and only root can modify it
-	let decrypted = {
-		let mut input = Cursor::new(&secret);
-		let decryptor = Decryptor::new(&mut input).context("failed to init decryptor")?;
-		let decryptor = match decryptor {
-			Decryptor::Recipients(r) => r,
-			Decryptor::Passphrase(_) => bail!("should be recipients"),
-		};
-		let mut decryptor = decryptor
-			.decrypt(iter::once(identity as &dyn age::Identity))
-			.context("failed to decrypt, wrong key?")?;
-
-		let mut decrypted = Vec::new();
-		decryptor
-			.read_to_end(&mut decrypted)
-			.context("failed to decrypt")?;
-		decrypted
-	};
+	let decrypted = decrypt(&secret, identity)?;
 	if decrypted.is_empty() {
 		warn!("secret is decoded as empty, something is broken?");
 	}
@@ -132,13 +184,19 @@ fn init_secret(identity: &age::ssh::Identity, value: DataItem) -> Result<()> {
 	Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
-	env_logger::Builder::new()
-		.filter_level(log::LevelFilter::Info)
-		.init();
+fn host_identity() -> anyhow::Result<SshIdentity> {
+	let identity = SshIdentity::from_buffer(
+		&mut Cursor::new(
+			fs::read("/etc/ssh/ssh_host_ed25519_key").context("failed to read host private key")?,
+		),
+		None,
+	)
+	.context("failed to parse identity")?;
+	Ok(identity)
+}
 
-	let opts = Opts::parse();
-	let data = fs::read(&opts.data).context("failed to read secrets data")?;
+fn install(data: &Path) -> anyhow::Result<()> {
+	let data = fs::read(data).context("failed to read secrets data")?;
 	let data_str = from_utf8(&data).context("failed to read data to string")?;
 	let data: Data = serde_json::from_str(data_str).context("failed to parse data")?;
 
@@ -149,13 +207,7 @@ fn main() -> anyhow::Result<()> {
 		fs::create_dir("/run/secrets").context("failed to create secrets directory")?;
 	}
 
-	let identity = age::ssh::Identity::from_buffer(
-		&mut Cursor::new(
-			fs::read("/etc/ssh/ssh_host_ed25519_key").context("failed to read host private key")?,
-		),
-		None,
-	)
-	.context("failed to parse identity")?;
+	let identity = host_identity()?;
 
 	let mut failed = false;
 	for (name, value) in data {
@@ -173,4 +225,36 @@ fn main() -> anyhow::Result<()> {
 	}
 
 	Ok(())
+}
+
+fn main() -> anyhow::Result<()> {
+	env_logger::Builder::new()
+		.filter_level(log::LevelFilter::Info)
+		.init();
+
+	let opts = Opts::parse();
+
+	match opts {
+		Opts::Install { data } => install(&data),
+		Opts::Reencrypt { secret, targets } => {
+			let identity = host_identity()?;
+			let decrypted = decrypt(&secret, &identity).context("during decryption")?;
+			let encrypted = encrypt(&decrypted, targets).context("during re-encryption")?;
+
+			println!("{encrypted}");
+			Ok(())
+		}
+		Opts::Decrypt { secret, plaintext } => {
+			let identity = host_identity()?;
+			let decrypted = decrypt(&secret, &identity).context("during decryption")?;
+
+			if plaintext {
+				let s = String::from_utf8(decrypted).context("output is not utf8")?;
+				print!("{}", s);
+			} else {
+				println!("{}", SecretWrapper(decrypted));
+			}
+			Ok(())
+		}
+	}
 }
