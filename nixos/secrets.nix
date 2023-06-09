@@ -5,14 +5,14 @@ with lib;
 let
   sysConfig = config;
   secretType = types.submodule ({ config, ... }: {
-    config = rec {
-      stableSecretPath = mkOptionDefault "/run/secrets/secret-stable-${config._module.args.name}";
-      secretPath = mkOptionDefault "/run/secrets/secret-${config.secretHash}-${config._module.args.name}";
-      secretHash = mkOptionDefault (if config.secret != null then (builtins.hashString "sha1" config.secret) else "<missingno>");
+    config = let secretName = config._module.args.name; in rec {
+      stableSecretPath = mkOptionDefault "/run/secrets/secret-stable-${secretName}";
+      secretPath = mkOptionDefault "/run/secrets/secret-${config.secretHash}-${secretName}";
+      secretHash = mkOptionDefault (if config.secret != null then (builtins.hashString "sha1" config.secret) else throw "secret is not defined for secret ${secretName}");
 
-      stablePublicPath = mkOptionDefault "/run/secrets/public-stable-${config._module.args.name}";
-      publicPath = mkOptionDefault "/run/secrets/public-${config.publicHash}-${config._module.args.name}";
-      publicHash = mkOptionDefault (if config.public != null then (builtins.hashString "sha1" config.public) else "<missingno>");
+      stablePublicPath = mkOptionDefault "/run/secrets/public-stable-${secretName}";
+      publicPath = mkOptionDefault "/run/secrets/public-${config.publicHash}-${secretName}";
+      publicHash = mkOptionDefault (if config.public != null then (builtins.hashString "sha1" config.public) else throw "public is not defined for secret ${secretName}");
     };
     options = {
       public = mkOption {
@@ -77,7 +77,13 @@ let
   });
   secretsFile = pkgs.writeTextFile {
     name = "secrets.json";
-    text = builtins.toJSON config.secrets;
+    text = builtins.toJSON (mapAttrs (_: value: rec {
+      inherit (value) group mode owner secret public;
+      publicPath = if public != null then value.publicPath else "/missingno";
+      stablePublicPath = if public != null then value.stablePublicPath else "/missingno";
+      secretPath = if secret != null then value.secretPath else "/missingno";
+      stableSecretPath = if secret != null then value.stableSecretPath else "/missingno";
+    }) config.secrets);
   };
 in
 {

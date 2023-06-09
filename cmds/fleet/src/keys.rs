@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
-use crate::{command::CommandExt, host::Config};
+use crate::command::MyCommand;
+use crate::host::Config;
 use anyhow::{anyhow, Result};
 use tracing::warn;
 
@@ -26,11 +27,9 @@ impl Config {
 			Ok(key)
 		} else {
 			warn!("Loading key for {}", host);
-			let key = self
-				.command_on(host, "cat", false)
-				.arg("/etc/ssh/ssh_host_ed25519_key.pub")
-				.run_string()
-				.await?;
+			let mut cmd = MyCommand::new("cat");
+			cmd.arg("/etc/ssh/ssh_host_ed25519_key.pub");
+			let key = self.run_string_on(host, cmd, false).await?;
 			self.update_key(host, key.clone());
 			Ok(key)
 		}

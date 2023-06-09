@@ -1,7 +1,7 @@
 use std::{
 	cell::{Ref, RefCell, RefMut},
 	env::current_dir,
-	ffi::{OsStr, OsString},
+	ffi::OsString,
 	io::Write,
 	ops::Deref,
 	path::PathBuf,
@@ -12,10 +12,9 @@ use anyhow::{Result, bail, Context};
 use clap::{ArgGroup, Parser};
 use serde::de::DeserializeOwned;
 use tempfile::NamedTempFile;
-use tokio::process::Command;
 
 use crate::{
-	command::CommandExt,
+	command::MyCommand,
 	fleetdata::{FleetData, FleetSecret, FleetSharedSecret},
 };
 
@@ -52,24 +51,24 @@ impl Config {
 		self.opts.localhost.as_ref().map(|s| s as &str) == Some(host)
 	}
 
-	pub fn command_on(&self, host: &str, program: impl AsRef<OsStr>, sudo: bool) -> Command {
-		if self.is_local(host) {
-			if sudo {
-				let mut cmd = Command::new("sudo");
-				cmd.arg(program);
-				cmd
-			} else {
-				Command::new(program)
-			}
-		} else {
-			let mut cmd = Command::new("ssh");
-			cmd.arg(host).arg("--");
-			if sudo {
-				cmd.arg("sudo");
-			}
-			cmd.arg(program);
-			cmd
+	pub async fn run_on(&self, host: &str, mut command: MyCommand, sudo: bool) -> Result<()> {
+		if sudo {
+			command = command.sudo();
 		}
+		if !self.is_local(host) {
+			command = command.ssh(host);
+		}
+		command.run().await
+	}
+	#[must_use]
+	pub async fn run_string_on(&self, host: &str, mut command: MyCommand, sudo: bool) -> Result<String> {
+		if sudo {
+			command = command.sudo();
+		}
+		if !self.is_local(host) {
+			command = command.ssh(host);
+		}
+		command.run_string().await
 	}
 
 	pub fn configuration_attr_name(&self, name: &str) -> OsString {
@@ -83,36 +82,36 @@ impl Config {
 	}
 
 	pub async fn list_hosts(&self) -> Result<Vec<String>> {
-		Command::new("nix")
-			.arg("eval")
+		let mut cmd = MyCommand::new("nix");
+		cmd.arg("eval")
 			.arg(self.configuration_attr_name("configuredHosts"))
 			.args(["--apply", "builtins.attrNames", "--json", "--show-trace"])
-			.args(&self.nix_args)
-			.run_nix_json()
+			.args(&self.nix_args);
+		cmd.run_nix_json()
 			.await
 	}
 	pub async fn shared_config_attr<T: DeserializeOwned>(&self, attr: &str) -> Result<T> {
-		Command::new("nix")
-			.arg("eval")
+		let mut cmd = MyCommand::new("nix");
+		cmd.arg("eval")
 			.arg(self.configuration_attr_name(&format!("configUnchecked.{}", attr)))
 			.args(["--json", "--show-trace"])
-			.args(&self.nix_args)
-			.run_nix_json()
+			.args(&self.nix_args);
+		cmd.run_nix_json()
 			.await
 	}
 	pub async fn shared_config_attr_names(&self, attr: &str) -> Result<Vec<String>> {
-		Command::new("nix")
-			.arg("eval")
+		let mut cmd = MyCommand::new("nix");
+		cmd.arg("eval")
 			.arg(self.configuration_attr_name(&format!("configUnchecked.{}", attr)))
 			.args(["--apply", "builtins.attrNames"])
 			.args(["--json", "--show-trace"])
-			.args(&self.nix_args)
-			.run_nix_json()
+			.args(&self.nix_args);
+		cmd.run_nix_json()
 			.await
 	}
 	pub async fn config_attr<T: DeserializeOwned>(&self, host: &str, attr: &str) -> Result<T> {
-		Command::new("nix")
-			.arg("eval")
+		let mut cmd = MyCommand::new("nix");
+		cmd.arg("eval")
 			.arg(
 				self.configuration_attr_name(&format!(
 					"configuredSystems.{}.config.{}",
@@ -120,8 +119,8 @@ impl Config {
 				)),
 			)
 			.args(["--json", "--show-trace"])
-			.args(&self.nix_args)
-			.run_nix_json()
+			.args(&self.nix_args);
+		cmd.run_nix_json()
 			.await
 	}
 
@@ -171,23 +170,20 @@ impl Config {
 
 	pub async fn decrypt_on_host(&self, host: &str, data: Vec<u8>) -> Result<Vec<u8>>{
 		let data = z85::encode(&data);
-		let encoded = self.command_on(host, "fleet-install-secrets", true)
-			.arg("decrypt")
-			.arg("--secret")
-			.arg(data).run_string().await.context("failed to call remote host for decrypt")?.trim().to_owned();
+		let mut cmd = MyCommand::new("fleet-install-secrets");
+		cmd.arg("decrypt").eqarg("--secret", data);
+		cmd = cmd.sudo().ssh(host);
+		let encoded = cmd.run_string().await.context("failed to call remote host for decrypt")?.trim().to_owned();
 		Ok(z85::decode(encoded).context("bad encoded data? outdated host?")?)
 	}
 	pub async fn reencrypt_on_host(&self, host: &str, data: Vec<u8>, targets: Vec<String>) -> Result<Vec<u8>>{
 		let data = z85::encode(&data);
-		let mut recmd = self.command_on(host, "fleet-install-secrets", true);
-		recmd
-			.arg("reencrypt")
-			.arg("--secret")
-			.arg(format!("\"{}\"", data.replace('$', "\\$")));
+		let mut recmd = MyCommand::new("fleet-install-secrets");
+		recmd.arg("reencrypt").eqarg("--secret",data);
 		for target in targets {
-			recmd.arg("--targets");
-			recmd.arg(format!("\"{target}\""));
+			recmd.eqarg("--targets", target);
 		}
+		recmd = recmd.sudo().ssh(host);
 		let encoded = recmd.run_string().await.context("failed to call remote host for decrypt")?.trim().to_owned();
 		Ok(z85::decode(encoded).context("bad encoded data? outdated host?")?)
 	}

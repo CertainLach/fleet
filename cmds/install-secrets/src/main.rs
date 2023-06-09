@@ -250,7 +250,7 @@ fn main() -> anyhow::Result<()> {
 
 			if plaintext {
 				let s = String::from_utf8(decrypted).context("output is not utf8")?;
-				print!("{}", s);
+				print!("{s}");
 			} else {
 				println!("{}", SecretWrapper(decrypted));
 			}

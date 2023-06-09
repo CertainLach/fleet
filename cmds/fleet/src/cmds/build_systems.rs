@@ -1,9 +1,10 @@
-use std::{env::current_dir, process::Stdio, time::Duration};
+use std::{env::current_dir, time::Duration};
 
-use crate::{command::CommandExt, host::Config};
+use crate::command::MyCommand;
+use crate::host::Config;
 use anyhow::Result;
 use clap::Parser;
-use tokio::{process::Command, task::LocalSet, time::sleep};
+use tokio::{task::LocalSet, time::sleep};
 use tracing::{error, field, info, info_span, warn, Instrument};
 
 #[derive(Parser, Clone)]
@@ -33,6 +34,9 @@ impl UploadAction {
 	}
 
 	pub(crate) fn should_switch_profile(&self) -> bool {
+		matches!(self, Self::Switch | Self::Boot)
+	}
+	pub(crate) fn should_activate(&self) -> bool {
 		matches!(self, Self::Switch | Self::Test)
 	}
 }
@@ -108,13 +112,7 @@ impl BuildSystems {
 			dir.path().to_owned()
 		};
 
-		let mut nix_build = if self.privileged_build {
-			let mut out = Command::new("sudo");
-			out.arg("nix");
-			out
-		} else {
-			Command::new("nix")
-		};
+		let mut nix_build = MyCommand::new("nix");
 		nix_build
 			.args([
 				"build",
@@ -122,9 +120,8 @@ impl BuildSystems {
 				"--json",
 				// "--show-trace",
 				"--no-link",
-				"--out-link",
 			])
-			.arg(&built)
+			.comparg("--out-link", &built)
 			.arg(
 				config.configuration_attr_name(&format!(
 					"buildSystems.{}.{host}",
@@ -132,6 +129,10 @@ impl BuildSystems {
 				)),
 			)
 			.args(&config.nix_args);
+
+		if self.privileged_build {
+			nix_build = nix_build.sudo();
+		}
 
 		nix_build.run_nix().await.map_err(|e| {
 			if action.build_attr() == "sdImage" {
@@ -149,14 +150,11 @@ impl BuildSystems {
 					info!("uploading system closure");
 					let mut tries = 0;
 					loop {
-						match Command::new("nix")
-							.args(["copy", "--to"])
-							.arg(format!("ssh://root@{}", host))
-							.arg(&built)
-							.inherit_stdio()
-							.run_nix()
-							.await
-						{
+						let mut nix = MyCommand::new("nix");
+						nix.arg("copy")
+							.comparg("--to", format!("ssh://root@{host}"))
+							.arg(&built);
+						match nix.run_nix().await {
 							Ok(()) => break,
 							Err(e) if tries < 3 => {
 								tries += 1;
@@ -170,24 +168,20 @@ impl BuildSystems {
 				if let Some(action) = action {
 					if action.should_switch_profile() {
 						info!("switching generation");
-						config
-							.command_on(&host, "nix-env", true)
-							.args(["-p", "/nix/var/nix/profiles/system", "--set"])
-							.arg(&built)
-							.inherit_stdio()
-							.run()
-							.await?;
+						let mut cmd = MyCommand::new("nix-env");
+						cmd.comparg("--profile", "/nix/var/nix/profiles/system")
+							.comparg("--set", &built);
+						config.run_on(&host, cmd, true).await?;
 					}
-					info!("executing activation script");
-					let mut switch_script = built.clone();
-					switch_script.push("bin");
-					switch_script.push("switch-to-configuration");
-					config
-						.command_on(&host, switch_script, true)
-						.arg(action.name())
-						.stdout(Stdio::inherit())
-						.run()
-						.await?;
+					if action.should_activate() {
+						info!("executing activation script");
+						let mut switch_script = built.clone();
+						switch_script.push("bin");
+						switch_script.push("switch-to-configuration");
+						let mut cmd = MyCommand::new(switch_script);
+						cmd.arg(action.name());
+						config.run_on(&host, cmd, true).await?;
+					}
 				}
 			}
 			Action::Package(PackageAction::SdImage) => {
@@ -195,39 +189,30 @@ impl BuildSystems {
 				out.push(format!("sd-image-{}", host));
 
 				info!("building sd image to {:?}", out);
-				let mut nix_build = if self.privileged_build {
-					let mut out = Command::new("sudo");
-					out.arg("nix");
-					out
-				} else {
-					Command::new("nix")
-				};
+				let mut nix_build = MyCommand::new("nix");
 				nix_build
-					.args(["build", "--impure", "--no-link", "--out-link"])
-					.arg(&out)
+					.args(["build", "--impure", "--no-link"])
+					.comparg("--out-link", &out)
 					.arg(config.configuration_attr_name(&format!("buildSystems.sdImage.{}", host,)))
 					.args(&config.nix_args);
 				if !self.fail_fast {
 					nix_build.arg("--keep-going");
 				}
+				if self.privileged_build {
+					nix_build = nix_build.sudo();
+				}
 
-				nix_build.inherit_stdio().run_nix().await?;
+				nix_build.run_nix().await?;
 			}
 			Action::Package(PackageAction::InstallationCd) => {
 				let mut out = current_dir()?;
 				out.push(format!("installation-cd-{}", host));
 
 				info!("building sd image to {:?}", out);
-				let mut nix_build = if self.privileged_build {
-					let mut out = Command::new("sudo");
-					out.arg("nix");
-					out
-				} else {
-					Command::new("nix")
-				};
+				let mut nix_build = MyCommand::new("nix");
 				nix_build
-					.args(["build", "--impure", "--no-link", "--out-link"])
-					.arg(&out)
+					.args(["build", "--impure", "--no-link"])
+					.comparg("--out-link", &out)
 					.arg(
 						config.configuration_attr_name(&format!(
 							"buildSystems.installationCd.{}",
@@ -238,8 +223,11 @@ impl BuildSystems {
 				if !self.fail_fast {
 					nix_build.arg("--keep-going");
 				}
+				if self.privileged_build {
+					nix_build = nix_build.sudo();
+				}
 
-				nix_build.inherit_stdio().run_nix().await?;
+				nix_build.run_nix().await?;
 			}
 		};
 		Ok(())

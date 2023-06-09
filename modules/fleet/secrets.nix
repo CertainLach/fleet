@@ -2,15 +2,6 @@
 let
   sharedSecret = with types; {
     options = {
-      owners = mkOption {
-        type = listOf str;
-        description = ''
-          For which owners this secret is currently encrypted,
-          if not matches expectedOwners - then this secret is considered outdated, and
-          should be regenerated/reencrypted
-        '';
-        default = [ ];
-      };
       expectedOwners = mkOption {
         type = listOf str;
         description = ''
@@ -25,12 +16,38 @@ let
         description = "Is this secret owner-dependent, and needs to be regenerated on ownership set change, or it may be just reencrypted";
       };
       generator = mkOption {
-        type = nullOr package;
-        description = ''
-          Derivation to execute for secret generation
+        type = nullOr (submodule {
+          packages = mkOption {
+            type = attrsOf package;
+            description = ''
+              Derivation to execute for shared secret generation (key = system).
+              This derivation should produce directory, with exactly two files:
+                - publicData
+                - encryptedSecretData
 
-          If null - may only be created manually
-        '';
+              If null - secret value may only be created manually.
+            '';
+          };
+          expectedData = mkOption {
+            type = types.unspecified;
+            description = "Data expected to be used for secret generation, if doesn't match specified - secret should be regenerated";
+          };
+          dependencies = mkOption {
+            type = listOf str;
+            description = ''
+              List of secrets, on which this secret depends.
+
+              During generation, generator command will be ran on host, which already has specified secrets generated.
+            '';
+            default = [];
+          };
+          data = mkOption {
+            type = types.unspecified;
+            description = "Data used for secret generation. Imported from fleet.nix";
+            default = null;
+            internal = true;
+          };
+        });
         default = null;
       };
       expireIn = mkOption {
@@ -38,15 +55,28 @@ let
         description = "Time in hours, in which this secret should be regenerated";
         default = null;
       };
+
+      owners = mkOption {
+        type = listOf str;
+        description = ''
+          For which owners this secret is currently encrypted,
+          if not matches expectedOwners - then this secret is considered outdated, and
+          should be regenerated/reencrypted.
+
+          Imported from fleet.nix
+        '';
+        default = [ ];
+      };
       public = mkOption {
         type = nullOr str;
-        description = "Secret public data";
+        description = "Secret public data. Imported from fleet.nix";
         default = null;
       };
       secret = mkOption {
         type = nullOr str;
-        description = "Encrypted secret data";
+        description = "Encrypted secret data. Imported from fleet.nix";
         default = null;
+        internal = true;
       };
     };
   };

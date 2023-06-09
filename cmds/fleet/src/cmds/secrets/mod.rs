@@ -2,18 +2,16 @@ use crate::{
 	fleetdata::{FleetSecret, FleetSharedSecret},
 	host::Config,
 };
-use age::{Decryptor, Encryptor};
 use anyhow::{bail, ensure, Context, Result};
 use clap::Parser;
 use futures::{StreamExt, TryStreamExt};
 use std::{
 	collections::HashSet,
-	io::{self, Cursor, Read, Write},
-	iter,
+	io::{self, Cursor, Read},
 	path::PathBuf,
 };
 use tokio::fs::read_to_string;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
 #[derive(Parser)]
 pub enum Secrets {
@@ -313,6 +311,7 @@ impl Secrets {
 				}
 				let mut to_remove = Vec::new();
 				for name in &config.list_shared() {
+					info!("updating secret: {name}");
 					let mut data = config.shared_secret(name)?;
 					let expected_owners: Vec<String> = config
 						.shared_config_attr(&format!("sharedSecrets.\"{name}\".expectedOwners"))
@@ -326,14 +325,12 @@ impl Secrets {
 					let expected_set = expected_owners.iter().collect::<HashSet<_>>();
 					let should_remove = set.difference(&expected_set).next().is_some();
 					if set != expected_set {
-						warn!("reconfiguring owners for {name}");
-						let generator: Option<String> = config
-							.shared_config_attr(&format!("sharedSecrets.\"{name}\".generator"))
+						let owner_dependent: bool = config
+							.shared_config_attr(&format!("sharedSecrets.\"{name}\".ownerDependent"))
 							.await?;
-						// TODO: if !.owner_dependent
-						if let Some(str) = generator {
-							todo!("regenerate")
-						} else {
+						if !owner_dependent {
+							warn!("reencrypting secret '{name}' for new owner set");
+							// TODO: force regeneration
 							if should_remove {
 								warn!("secret will not be regenerated for removed machines, and until host rebuild, they will still possess the ability to decode secret");
 							}
@@ -367,7 +364,16 @@ impl Secrets {
 							data.secret.secret = encrypted;
 							data.owners = expected_owners;
 							config.replace_shared(name.to_owned(), data);
+						} else if let Some(generator) = config
+							.shared_config_attr::<Option<String>>(&format!("sharedSecrets.\"{name}\".generator"))
+							.await?
+						{
+							todo!("regenerate secret {name} with {generator}");
+						} else {
+							error!("secret '{name}' should be regenerated manually");
 						}
+					} else {
+						info!("secret data is ok")
 					}
 				}
 				for k in to_remove {
