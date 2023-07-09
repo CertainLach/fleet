@@ -254,8 +254,11 @@ async fn run_nix_inner(str: String, mut cmd: Command) -> Result<Option<String>> 
 							NixLog::Start { text, level: 1, typ: 111, .. } if text.starts_with("waiting for a machine to build ") => {
 								// Useless repeating notification about build
 							}
-							NixLog::Start { text, level: 3, typ: 111, .. } if text.starts_with("resolved derivation:  ") => {
+							NixLog::Start { text, level: 3, typ: 111, .. } if text.starts_with("resolved derivation: ") => {
 								// CA resolved
+							}
+							NixLog::Start { text, level: 1, typ: 111, .. } if text.starts_with("waiting for lock on ") => {
+								// Concurrent build of the same message
 							}
 							NixLog::Stop { .. } => {},
 							NixLog::Result { .. } => {},

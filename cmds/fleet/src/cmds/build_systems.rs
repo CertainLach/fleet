@@ -120,6 +120,9 @@ impl BuildSystems {
 				"--json",
 				// "--show-trace",
 				"--no-link",
+				"--option",
+				"log-lines",
+				"200",
 			])
 			.comparg("--out-link", &built)
 			.arg(

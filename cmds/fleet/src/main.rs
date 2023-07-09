@@ -5,15 +5,46 @@ pub mod keys;
 
 mod fleetdata;
 
+use std::ffi::OsString;
 use std::io;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::Parser;
 
 use cmds::{build_systems::BuildSystems, info::Info, secrets::Secrets};
 use host::{Config, FleetOpts};
+use tokio::fs;
+use tokio::process::Command;
 use tracing::{info, metadata::LevelFilter};
 use tracing_subscriber::EnvFilter;
+
+#[derive(Parser)]
+struct Prefetch {}
+impl Prefetch {
+	async fn run(&self, config: &Config) -> Result<()> {
+		let mut prefetch_dir = config.directory.to_path_buf();
+		prefetch_dir.push("prefetch");
+		if !prefetch_dir.is_dir() {
+			info!("nothing to prefetch: no prefetch directory");
+			return Ok(());
+		}
+		for entry in std::fs::read_dir(&prefetch_dir)? {
+			let entry = entry?;
+			if !entry.metadata()?.is_file() {
+				bail!("only files should exist in prefetch directory");
+			}
+			info!("prefetching {:?}", entry.file_name());
+			let mut path = OsString::new();
+			path.push("file://");
+			path.push(entry.path());
+			let status = Command::new("nix-prefetch-url").arg(path).status().await?;
+			if !status.success() {
+				bail!("failed with {status}");
+			}
+		}
+		Ok(())
+	}
+}
 
 #[derive(Parser)]
 enum Opts {
@@ -22,6 +53,8 @@ enum Opts {
 	/// Secret management
 	#[clap(subcommand)]
 	Secrets(Secrets),
+	/// Upload prefetch directory to the nix store
+	Prefetch(Prefetch),
 	/// Config parsing
 	Info(Info),
 }
@@ -40,6 +73,7 @@ async fn run_command(config: &Config, command: Opts) -> Result<()> {
 		Opts::BuildSystems(c) => c.run(config).await?,
 		Opts::Secrets(s) => s.run(config).await?,
 		Opts::Info(i) => i.run(config).await?,
+		Opts::Prefetch(p) => p.run(config).await?,
 	};
 	Ok(())
 }
