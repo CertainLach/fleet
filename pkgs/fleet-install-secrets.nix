@@ -10,7 +10,7 @@ rustPlatform.buildRustPackage rec {
   cargoLock = {
     lockFile = ../Cargo.lock;
     outputHashes = {
-      "alejandra-3.0.0" = "sha256-YSdHsJ73G7TEFzbmpZ2peuMefIa9/vNB2g+xdiyma3U=";
+      "alejandra-3.0.0" = "sha256-lStDIPizbJipd1JpNKX1olBKzyIosyC2U/mVFwJPcZE=";
     };
   };
 }

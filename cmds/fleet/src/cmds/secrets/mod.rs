@@ -11,7 +11,7 @@ use std::{
 	path::PathBuf,
 };
 use tokio::fs::read_to_string;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 #[derive(Parser)]
 pub enum Secrets {
@@ -281,8 +281,8 @@ impl Secrets {
 					secret.owners.first()
 				};
 				let Some(identity_holder) = identity_holder else {
-                    bail!("no available holder found");
-                };
+					bail!("no available holder found");
+				};
 				let target_recipients = futures::stream::iter(&target_machines)
 					.then(|m| async { config.key(m).await })
 					.collect::<Vec<_>>()
@@ -365,7 +365,9 @@ impl Secrets {
 							data.owners = expected_owners;
 							config.replace_shared(name.to_owned(), data);
 						} else if let Some(generator) = config
-							.shared_config_attr::<Option<String>>(&format!("sharedSecrets.\"{name}\".generator"))
+							.shared_config_attr::<Option<String>>(&format!(
+								"sharedSecrets.\"{name}\".generator"
+							))
 							.await?
 						{
 							todo!("regenerate secret {name} with {generator}");

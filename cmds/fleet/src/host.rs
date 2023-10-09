@@ -8,7 +8,7 @@ use std::{
 	sync::Arc,
 };
 
-use anyhow::{Result, bail, Context};
+use anyhow::{bail, Context, Result};
 use clap::{ArgGroup, Parser};
 use serde::de::DeserializeOwned;
 use tempfile::NamedTempFile;
@@ -61,7 +61,12 @@ impl Config {
 		command.run().await
 	}
 	#[must_use]
-	pub async fn run_string_on(&self, host: &str, mut command: MyCommand, sudo: bool) -> Result<String> {
+	pub async fn run_string_on(
+		&self,
+		host: &str,
+		mut command: MyCommand,
+		sudo: bool,
+	) -> Result<String> {
 		if sudo {
 			command = command.sudo();
 		}
@@ -87,8 +92,7 @@ impl Config {
 			.arg(self.configuration_attr_name("configuredHosts"))
 			.args(["--apply", "builtins.attrNames", "--json", "--show-trace"])
 			.args(&self.nix_args);
-		cmd.run_nix_json()
-			.await
+		cmd.run_nix_json().await
 	}
 	pub async fn shared_config_attr<T: DeserializeOwned>(&self, attr: &str) -> Result<T> {
 		let mut cmd = MyCommand::new("nix");
@@ -96,8 +100,7 @@ impl Config {
 			.arg(self.configuration_attr_name(&format!("configUnchecked.{}", attr)))
 			.args(["--json", "--show-trace"])
 			.args(&self.nix_args);
-		cmd.run_nix_json()
-			.await
+		cmd.run_nix_json().await
 	}
 	pub async fn shared_config_attr_names(&self, attr: &str) -> Result<Vec<String>> {
 		let mut cmd = MyCommand::new("nix");
@@ -106,8 +109,7 @@ impl Config {
 			.args(["--apply", "builtins.attrNames"])
 			.args(["--json", "--show-trace"])
 			.args(&self.nix_args);
-		cmd.run_nix_json()
-			.await
+		cmd.run_nix_json().await
 	}
 	pub async fn config_attr<T: DeserializeOwned>(&self, host: &str, attr: &str) -> Result<T> {
 		let mut cmd = MyCommand::new("nix");
@@ -120,8 +122,7 @@ impl Config {
 			)
 			.args(["--json", "--show-trace"])
 			.args(&self.nix_args);
-		cmd.run_nix_json()
-			.await
+		cmd.run_nix_json().await
 	}
 
 	pub(super) fn data(&self) -> Ref<FleetData> {
@@ -151,14 +152,14 @@ impl Config {
 	pub fn list_secrets(&self, host: &str) -> Vec<String> {
 		let data = self.data();
 		let Some(host_secrets) = data.host_secrets.get(host) else {
-			return Vec::new(); 
+			return Vec::new();
 		};
 		host_secrets.keys().cloned().collect()
 	}
 	pub fn has_secret(&self, host: &str, secret: &str) -> bool {
 		let data = self.data();
 		let Some(host_secrets) = data.host_secrets.get(host) else {
-			return false; 
+			return false;
 		};
 		host_secrets.contains_key(secret)
 	}
@@ -168,23 +169,38 @@ impl Config {
 		host_secrets.insert(secret, value);
 	}
 
-	pub async fn decrypt_on_host(&self, host: &str, data: Vec<u8>) -> Result<Vec<u8>>{
+	pub async fn decrypt_on_host(&self, host: &str, data: Vec<u8>) -> Result<Vec<u8>> {
 		let data = z85::encode(&data);
 		let mut cmd = MyCommand::new("fleet-install-secrets");
 		cmd.arg("decrypt").eqarg("--secret", data);
 		cmd = cmd.sudo().ssh(host);
-		let encoded = cmd.run_string().await.context("failed to call remote host for decrypt")?.trim().to_owned();
+		let encoded = cmd
+			.run_string()
+			.await
+			.context("failed to call remote host for decrypt")?
+			.trim()
+			.to_owned();
 		Ok(z85::decode(encoded).context("bad encoded data? outdated host?")?)
 	}
-	pub async fn reencrypt_on_host(&self, host: &str, data: Vec<u8>, targets: Vec<String>) -> Result<Vec<u8>>{
+	pub async fn reencrypt_on_host(
+		&self,
+		host: &str,
+		data: Vec<u8>,
+		targets: Vec<String>,
+	) -> Result<Vec<u8>> {
 		let data = z85::encode(&data);
 		let mut recmd = MyCommand::new("fleet-install-secrets");
-		recmd.arg("reencrypt").eqarg("--secret",data);
+		recmd.arg("reencrypt").eqarg("--secret", data);
 		for target in targets {
 			recmd.eqarg("--targets", target);
 		}
 		recmd = recmd.sudo().ssh(host);
-		let encoded = recmd.run_string().await.context("failed to call remote host for decrypt")?.trim().to_owned();
+		let encoded = recmd
+			.run_string()
+			.await
+			.context("failed to call remote host for decrypt")?
+			.trim()
+			.to_owned();
 		Ok(z85::decode(encoded).context("bad encoded data? outdated host?")?)
 	}
 
@@ -192,11 +208,11 @@ impl Config {
 	pub fn host_secret(&self, host: &str, secret: &str) -> Result<FleetSecret> {
 		let data = self.data();
 		let Some(host_secrets) = data.host_secrets.get(host) else {
-            bail!("no secrets for machine {host}");
-        };
+			bail!("no secrets for machine {host}");
+		};
 		let Some(secret) = host_secrets.get(secret) else {
-            bail!("machine {host} has no secret {secret}");
-        };
+			bail!("machine {host} has no secret {secret}");
+		};
 		Ok(secret.clone())
 	}
 	#[must_use]

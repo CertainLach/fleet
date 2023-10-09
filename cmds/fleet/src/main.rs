@@ -7,16 +7,19 @@ mod fleetdata;
 
 use std::ffi::OsString;
 use std::io;
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
 use clap::Parser;
 
 use cmds::{build_systems::BuildSystems, info::Info, secrets::Secrets};
 use host::{Config, FleetOpts};
+use indicatif::{ProgressState, ProgressStyle};
 use tokio::fs;
 use tokio::process::Command;
 use tracing::{info, metadata::LevelFilter};
-use tracing_subscriber::EnvFilter;
+use tracing_indicatif::IndicatifLayer;
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 #[derive(Parser)]
 struct Prefetch {}
@@ -77,21 +80,53 @@ async fn run_command(config: &Config, command: Opts) -> Result<()> {
 	};
 	Ok(())
 }
+fn elapsed_subsec(state: &ProgressState, writer: &mut dyn std::fmt::Write) {
+	let _ = writer.write_str(&format!("{:?}", state.elapsed()));
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-	let filter = EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into());
-	tracing_subscriber::FmtSubscriber::builder()
-		.with_env_filter(filter)
-		.without_time()
-		.with_target(false)
-		.with_writer(|| {
-			// eprintln!("Line");
-			io::stderr()
-		})
-		.try_init()
-		.map_err(|e| anyhow!("Failed to initialize logger: {}", e))?;
+	let indicatif_layer = IndicatifLayer::new().with_progress_style(
+		ProgressStyle::with_template(
+			"{color_start}{span_child_prefix} {span_name}{{{span_fields}}}{color_end} {wide_msg} {color_start}{pos:>7}/{len:7}{elapsed}{color_end}",
+		)
+		.unwrap()
+		.with_key(
+			"color_start",
+			|state: &ProgressState, writer: &mut dyn std::fmt::Write| {
+				let elapsed = state.elapsed();
 
+				if elapsed > Duration::from_secs(60) {
+					// Red
+					let _ = write!(writer, "\x1b[{}m", 1 + 30);
+				} else if elapsed > Duration::from_secs(30) {
+					// Yellow
+					let _ = write!(writer, "\x1b[{}m", 3 + 30);
+				}
+			},
+		)
+		.with_key(
+			"color_end",
+			|state: &ProgressState, writer: &mut dyn std::fmt::Write| {
+				if state.elapsed() > Duration::from_secs(30) {
+					let _ = write!(writer, "\x1b[0m");
+				}
+			},
+		),
+	);
+
+	let filter = EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into());
+
+	tracing_subscriber::registry()
+		.with(
+			tracing_subscriber::fmt::layer()
+				.without_time()
+				.with_target(false)
+				.with_writer(indicatif_layer.get_stderr_writer())
+				.with_filter(filter), // .withou,
+		)
+		.with(indicatif_layer)
+		.init();
 	info!("Starting");
 	let mut os_args = std::env::args_os();
 	let opts = RootOpts::parse_from((&mut os_args).take_while(|v| v != "--"));
