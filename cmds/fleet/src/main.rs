@@ -1,3 +1,5 @@
+#![feature(try_blocks)]
+
 pub mod cmds;
 pub mod command;
 pub mod host;
@@ -6,16 +8,14 @@ pub mod keys;
 mod fleetdata;
 
 use std::ffi::OsString;
-use std::io;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use clap::Parser;
 
 use cmds::{build_systems::BuildSystems, info::Info, secrets::Secrets};
 use host::{Config, FleetOpts};
 use indicatif::{ProgressState, ProgressStyle};
-use tokio::fs;
 use tokio::process::Command;
 use tracing::{info, metadata::LevelFilter};
 use tracing_indicatif::IndicatifLayer;
@@ -79,9 +79,6 @@ async fn run_command(config: &Config, command: Opts) -> Result<()> {
 		Opts::Prefetch(p) => p.run(config).await?,
 	};
 	Ok(())
-}
-fn elapsed_subsec(state: &ProgressState, writer: &mut dyn std::fmt::Write) {
-	let _ = writer.write_str(&format!("{:?}", state.elapsed()));
 }
 
 #[tokio::main]

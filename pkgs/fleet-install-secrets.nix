@@ -6,7 +6,7 @@ rustPlatform.buildRustPackage rec {
   name = "${pname}-${version}";
 
   src = ../.;
-  cargoBuildFlags = "-p ${pname}";
+  buildAndTestSubdir = "cmds/install-secrets";
   cargoLock = {
     lockFile = ../Cargo.lock;
     outputHashes = {

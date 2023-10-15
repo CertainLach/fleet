@@ -143,12 +143,14 @@ impl MyCommand {
 
 	pub async fn run_nix_string(self) -> Result<String> {
 		let str = self.clone().into_string();
-		let cmd = self.into_command();
+		let mut cmd = self.into_command();
+		cmd.arg("--log-format").arg("internal-json");
 		run_nix_inner_stdout(str, cmd, &mut NixHandler::default()).await
 	}
 	pub async fn run_nix(self) -> Result<()> {
 		let str = self.clone().into_string();
 		let mut cmd = self.into_command();
+		cmd.arg("--log-format").arg("internal-json");
 		cmd.stdout(Stdio::inherit());
 		run_nix_inner(str, cmd, &mut NixHandler::default()).await
 	}
@@ -410,7 +412,6 @@ async fn run_nix_inner_raw(
 	handler: &mut dyn Handler,
 ) -> Result<Option<String>> {
 	info!("running {str}");
-	cmd.arg("--log-format").arg("internal-json");
 	cmd.stderr(Stdio::piped());
 	cmd.stdout(Stdio::piped());
 	let mut child = cmd.spawn()?;
