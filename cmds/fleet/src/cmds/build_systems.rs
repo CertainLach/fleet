@@ -191,6 +191,7 @@ async fn execute_upload(
 	// TODO: If rollback target exists - bail, it should be removed. Lockfile will not work in case if rollback
 	// is scheduler on next boot (default behavior). On current boot - rollback activator will fail due to
 	// unit name conflict in systemd-run
+	// This code is tied to rollback.nix
 	if !build.disable_rollback {
 		let _span = info_span!("preparing").entered();
 		info!("preparing for rollback");
@@ -334,6 +335,19 @@ impl BuildSystems {
 			Action::Upload { action } => {
 				if !config.is_local(&host) {
 					info!("uploading system closure");
+					{
+						let mut sign = MyCommand::new("sudo");
+						// Private key for host machine is registered in nix-sign.nix
+						sign.arg("nix")
+							.arg("store")
+							.arg("sign")
+							.comparg("-k", "/etc/nix/private-key")
+							.arg("-r")
+							.arg(&built);
+						if let Err(e) = sign.run_nix().await {
+							warn!("Failed to sign store paths: {e}");
+						};
+					}
 					let mut tries = 0;
 					loop {
 						let mut nix = MyCommand::new("nix");

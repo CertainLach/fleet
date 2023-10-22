@@ -269,7 +269,7 @@ impl Handler for NixHandler {
 								drv = pkg;
 							}
 						}
-						info!(target: "nix","copying {} {} -> {}", drv, from, to);
+						// info!(target: "nix","copying {} {} -> {}", drv, from, to);
 						let span = info_span!("copy", from, to, drv);
 						span.pb_start();
 						self.spans.insert(id, span);

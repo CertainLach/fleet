@@ -1,3 +1,4 @@
+# Tied to build_systems.rs
 {config, ...}: {
   # TODO: Make it work with systemd-initrd approach.
   # In this case we can't just switch generation and re-run activation script, since the root filesystem might not be
