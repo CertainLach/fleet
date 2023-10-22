@@ -7,14 +7,14 @@
   systemd.services.rollback-watchdog = {
     description = "Rollback watchdog";
     script = ''
-      set -eu
+      set -eux
       if [ -f /etc/fleet_rollback_marker ]; then
         echo "found the rollback marker, switching to older generation"
         target=$(cat /etc/fleet_rollback_marker)
         echo "rolling back profile"
         nix profile rollback --profile /nix/var/nix/profiles/system --to "$target"
         echo "executing activation script"
-        "/nix/var/nix/profiles/system-$target-link/bin/switch-to-configuration" switch
+        "/nix/var/nix/profiles/system-$target-link/bin/switch-to-configuration" switch || true
         echo "removing rollback marker"
         rm -f /etc/fleet_rollback_marker
       else
@@ -28,6 +28,8 @@
     serviceConfig.Type = "exec";
     unitConfig = {
       X-StopOnRemoval = false;
+      X-RestartIfChanged = false;
+      X-StopIfChanged = false;
     };
   };
 
@@ -35,7 +37,7 @@
     description = "Timer for rollback watchdog";
     wantedBy = ["timers.target"];
     timerConfig = {
-      OnUnitActiveSec = "3min";
+      OnActiveSec = "3min";
       RemainAfterElapse = false;
     };
     unitConfig = {
