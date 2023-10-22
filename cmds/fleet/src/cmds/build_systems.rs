@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::{env::current_dir, time::Duration};
 
 use crate::command::MyCommand;
@@ -166,6 +167,128 @@ async fn get_current_generation(config: &Config, host: &str) -> Result<Generatio
 	Ok(current)
 }
 
+async fn systemctl_stop(config: &Config, host: &str, unit: &str) -> Result<()> {
+	let mut cmd = MyCommand::new("systemctl");
+	cmd.arg("stop").arg(unit);
+	config.run_on(&host, cmd, true).await
+}
+
+async fn systemctl_start(config: &Config, host: &str, unit: &str) -> Result<()> {
+	let mut cmd = MyCommand::new("systemctl");
+	cmd.arg("start").arg(unit);
+	config.run_on(&host, cmd, true).await
+}
+
+async fn execute_upload(
+	build: &BuildSystems,
+	config: &Config,
+	action: UploadAction,
+	host: &str,
+	built: PathBuf,
+) -> Result<()> {
+	let mut failed = false;
+	// TODO: Lockfile, to prevent concurrent system switch?
+	// TODO: If rollback target exists - bail, it should be removed. Lockfile will not work in case if rollback
+	// is scheduler on next boot (default behavior). On current boot - rollback activator will fail due to
+	// unit name conflict in systemd-run
+	if !build.disable_rollback {
+		let _span = info_span!("preparing").entered();
+		info!("preparing for rollback");
+		let generation = get_current_generation(&config, &host).await?;
+		info!(
+			"rollback target would be {} {}",
+			generation.id, generation.datetime
+		);
+		{
+			let mut cmd = MyCommand::new("sh");
+			cmd.arg("-c").arg(format!("mark=$(mktemp -p /etc -t fleet_rollback_marker.XXXXX) && echo -n {} > $mark && mv --no-clobber $mark /etc/fleet_rollback_marker", generation.id));
+			if let Err(e) = config.run_on(&host, cmd, true).await {
+				error!("failed to set rollback marker: {e}");
+				failed = true;
+			}
+		}
+		// Activation script also starts rollback-watchdog.timer, however, it is possible that it won't be started.
+		// Kicking it on manually will work best.
+		//
+		// There wouldn't be conflict, because here we trigger start of the primary service, and systemd will
+		// only allow one instance of it.
+
+		// TODO: We should also watch how this process is going.
+		// After running this command, we have less than 3 minutes to deploy everything,
+		// if we fail to perform generation switch in time, then we will still call the activation script, and this may break something.
+		// Anyway, reboot will still help in this case.
+		if action.should_schedule_rollback_run() {
+			let mut cmd = MyCommand::new("systemd-run");
+			cmd.comparg("--on-active", "3min")
+				.comparg("--unit", "rollback-watchdog-run")
+				.arg("systemctl")
+				.arg("start")
+				.arg("rollback-watchdog.service");
+			if let Err(e) = config.run_on(&host, cmd, true).await {
+				error!("failed to schedule rollback run: {e}");
+				failed = true;
+			}
+		}
+	}
+	if action.should_switch_profile() && !failed {
+		info!("switching generation");
+		let mut cmd = MyCommand::new("nix-env");
+		cmd.comparg("--profile", "/nix/var/nix/profiles/system")
+			.comparg("--set", &built);
+		if let Err(e) = config.run_on(&host, cmd, true).await {
+			error!("failed to switch generation: {e}");
+			failed = true;
+		}
+	}
+	if action.should_activate() && !failed {
+		let _span = info_span!("activating").entered();
+		info!("executing activation script");
+		let mut switch_script = built.clone();
+		switch_script.push("bin");
+		switch_script.push("switch-to-configuration");
+		let mut cmd = MyCommand::new(switch_script);
+		cmd.arg(action.name());
+		if let Err(e) = config.run_on(&host, cmd, true).in_current_span().await {
+			error!("failed to activate: {e}");
+			failed = true;
+		}
+	}
+	if !build.disable_rollback {
+		if failed {
+			info!("executing rollback");
+			if let Err(e) = systemctl_start(&config, &host, "rollback-watchdog.service")
+				.instrument(info_span!("rollback"))
+				.await
+			{
+				error!("failed to trigger rollback: {e}")
+			}
+		} else {
+			info!("trying to mark upgrade as successful");
+			let mut cmd = MyCommand::new("rm");
+			cmd.arg("-f").arg("/etc/fleet_rollback_marker");
+			if let Err(e) = config.run_on(&host, cmd, true).in_current_span().await {
+				error!("failed to remove rollback marker. This is bad, as the system will be rolled back by watchdog: {e}")
+			}
+		}
+		info!("disarming watchdog, just in case");
+		if let Err(_e) = systemctl_stop(&config, &host, "rollback-watchdog.timer").await {
+			// It is ok, if there was no reboot - then timer might not be running.
+		}
+		if action.should_schedule_rollback_run() {
+			if let Err(e) = systemctl_stop(&config, &host, "rollback-watchdog-run.timer").await {
+				error!("failed to disarm rollback run: {e}");
+			}
+		}
+	} else {
+		let mut cmd = MyCommand::new("rm");
+		cmd.arg("-f").arg("/etc/fleet_rollback_marker");
+		if let Err(_e) = config.run_on(&host, cmd, true).in_current_span().await {
+			// Marker might not exist, yet better try to remove it.
+		}
+	}
+	Ok(())
+}
+
 impl BuildSystems {
 	async fn build_task(self, config: Config, host: String) -> Result<()> {
 		info!("building");
@@ -183,9 +306,6 @@ impl BuildSystems {
 				"--json",
 				// "--show-trace",
 				"--no-link",
-				"--option",
-				"log-lines",
-				"200",
 			])
 			.comparg("--out-link", &built)
 			.arg(
@@ -219,7 +339,7 @@ impl BuildSystems {
 						let mut nix = MyCommand::new("nix");
 						nix.arg("copy")
 							.arg("--substitute-on-destination")
-							.comparg("--to", format!("ssh://root@{host}"))
+							.comparg("--to", format!("ssh-ng://root@{host}"))
 							.arg(&built);
 						match nix.run_nix().await {
 							Ok(()) => break,
@@ -233,108 +353,7 @@ impl BuildSystems {
 					}
 				}
 				if let Some(action) = action {
-					let mut failed = false;
-					// TODO: Lockfile, to prevent concurrent system switch?
-					// TODO: If rollback target exists - bail, it should be removed. Lockfile will not work in case if rollback
-					// is scheduler on next boot (default behavior). On current boot - rollback activator will fail due to
-					// unit name conflict in systemd-run
-					if !self.disable_rollback {
-						let _span = info_span!("preparing").entered();
-						info!("preparing for rollback");
-						let generation = get_current_generation(&config, &host).await?;
-						info!(
-							"rollback target would be {} {}",
-							generation.id, generation.datetime
-						);
-						{
-							let mut cmd = MyCommand::new("sh");
-							cmd.arg("-c").arg(format!("mark=$(mktemp -p /etc -t fleet_rollback_marker.XXXXX) && echo -n {} > $mark && mv --no-clobber $mark /etc/fleet_rollback_marker", generation.id));
-							if let Err(e) = config.run_on(&host, cmd, true).await {
-								error!("failed to set rollback marker: {e}");
-								failed = true;
-							}
-						}
-						// Activation script also starts rollback-watchdog.timer, however, it is possible that it won't be started.
-						// Kicking it on manually will work best.
-						//
-						// There wouldn't be conflict, because here we trigger start of the primary service, and systemd will
-						// only allow one instance of it.
-						if action.should_schedule_rollback_run() {
-							let mut cmd = MyCommand::new("systemd-run");
-							cmd.comparg("--on-active", "3min")
-								.comparg("--unit", "rollback-watchdog-run")
-								.arg("systemctl")
-								.arg("start")
-								.arg("rollback-watchdog.service");
-							if let Err(e) = config.run_on(&host, cmd, true).await {
-								error!("failed to schedule rollback run: {e}");
-								failed = true;
-							}
-						}
-					}
-					if action.should_switch_profile() && !failed {
-						info!("switching generation");
-						let mut cmd = MyCommand::new("nix-env");
-						cmd.comparg("--profile", "/nix/var/nix/profiles/system")
-							.comparg("--set", &built);
-						if let Err(e) = config.run_on(&host, cmd, true).await {
-							error!("failed to switch generation: {e}");
-							failed = true;
-						}
-					}
-					if action.should_activate() && !failed {
-						let _span = info_span!("activating").entered();
-						info!("executing activation script");
-						let mut switch_script = built.clone();
-						switch_script.push("bin");
-						switch_script.push("switch-to-configuration");
-						let mut cmd = MyCommand::new(switch_script);
-						cmd.arg(action.name());
-						if let Err(e) = config.run_on(&host, cmd, true).in_current_span().await {
-							error!("failed to activate: {e}");
-							failed = true;
-						}
-					}
-					if !self.disable_rollback {
-						{
-							let _span = info_span!("rollback").entered();
-							if failed {
-								info!("executing rollback");
-								let mut cmd = MyCommand::new("systemctl");
-								cmd.arg("start").arg("rollback-watchdog.service");
-								if let Err(e) = config.run_on(&host, cmd, true).await {
-									error!("failed to rollback: {e}");
-								}
-							} else {
-								info!("marking upgrade as successful");
-								let mut cmd = MyCommand::new("rm");
-								cmd.arg("-f").arg("/etc/fleet_rollback_marker");
-								if let Err(e) =
-									config.run_on(&host, cmd, true).in_current_span().await
-								{
-									error!("failed to remove rollback marker. This is bad, as the system will be rolled back by watchdog: {e}")
-								}
-							}
-						}
-						{
-							let _span = info_span!("disarm").entered();
-							info!("disarming watchdog, just in case");
-							{
-								let mut cmd = MyCommand::new("systemctl");
-								cmd.arg("stop").arg("rollback-watchdog.timer");
-								if let Err(_e) = config.run_on(&host, cmd, true).await {
-									// It is ok, if there was no reboot.
-								}
-							}
-							if action.should_schedule_rollback_run() {
-								let mut cmd = MyCommand::new("systemctl");
-								cmd.arg("stop").arg("rollback-watchdog-run.timer");
-								if let Err(e) = config.run_on(&host, cmd, true).await {
-									error!("failed to disarm rollback run: {e}");
-								}
-							}
-						}
-					}
+					execute_upload(&self, &config, action, &host, built).await?
 				}
 			}
 			Action::Package(PackageAction::SdImage) => {
