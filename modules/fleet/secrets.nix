@@ -55,6 +55,14 @@ let
         description = "Time in hours, in which this secret should be regenerated";
         default = null;
       };
+      createdAt = mkOption {
+        type = nullOr str;
+        default = null;
+      };
+      expiresAt = mkOption {
+        type = nullOr str;
+        default = null;
+      };
 
       owners = mkOption {
         type = listOf str;
@@ -82,23 +90,24 @@ let
   };
   hostSecret = with types; {
     options = {
-      generator = mkOption {
-        type = package;
-        description = "Derivation to execute for secret generation";
+      createdAt = mkOption {
+        type = nullOr str;
+        default = null;
       };
-      expireIn = mkOption {
-        type = nullOr int;
-        description = "Time in hours, in which this secret should be regenerated";
+      expiresAt = mkOption {
+        type = nullOr str;
         default = null;
       };
       public = mkOption {
         type = nullOr str;
-        description = "Secret public data";
+        description = "Secret public data. Imported from fleet.nix";
         default = null;
       };
       secret = mkOption {
-        type = str;
-        description = "Encrypted secret data";
+        type = nullOr str;
+        description = "Encrypted secret data. Imported from fleet.nix";
+        default = null;
+        internal = true;
       };
     };
   };
@@ -113,7 +122,8 @@ in
     hostSecrets = mkOption {
       type = attrsOf (attrsOf (submodule hostSecret));
       default = { };
-      description = "Host secrets";
+      description = "Host secrets. Imported from fleet.nix";
+      internal = true;
     };
   };
   config = {

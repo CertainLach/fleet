@@ -4,18 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-age = { version = "0.9.0", features = ["ssh"] }
-anyhow = "1.0.44"
+age = { version = "0.9.2", features = ["ssh"] }
+anyhow = "1.0.75"
 env_logger = "0.10.0"
-log = "0.4.14"
-nix = "0.26.1"
-serde = { version = "1.0.130", features = ["derive"] }
-serde_json = "1.0.89"
-clap = { version = "4.0.29", features = [
+log = "0.4.20"
+nix = {version = "0.27.1", features = ["user", "fs"]}
+serde = { version = "1.0.190", features = ["derive"] }
+serde_json = "1.0.107"
+clap = { version = "4.4.7", features = [
 	"derive",
 	"env",
 	"wrap_help",
 	"unicode",
 ] }
-tempfile = "3.2.0"
-z85 = "3.0.3"
+tempfile = "3.8.1"
+z85 = "3.0.5"

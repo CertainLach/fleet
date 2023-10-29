@@ -36,14 +36,19 @@ impl Info {
 			InfoCmd::ListHosts { ref tagged } => {
 				'host: for host in config.list_hosts().await? {
 					if !tagged.is_empty() {
-						let tags: Vec<String> = config.config_attr(&host, "tags").await?;
+						let tags: Vec<String> = config
+							.fleet_field
+							.get_field_deep(["configuredSystems", &host.name, "config", "tags"])
+							.await?
+							.as_json()
+							.await?;
 						for tag in tagged {
 							if !tags.contains(tag) {
 								continue 'host;
 							}
 						}
 					}
-					data.push(host);
+					data.push(host.name);
 				}
 			}
 			InfoCmd::HostIps {
@@ -56,17 +61,20 @@ impl Info {
 					"at leas one of --external or --internal must be set"
 				);
 				let mut out = <BTreeSet<String>>::new();
+				let host = config.system_config(&host).await?;
 				if external {
 					out.extend(
-						config
-							.config_attr::<Vec<String>>(&host, "network.externalIps")
+						host.get_field_deep(["network", "externalIps"])
+							.await?
+							.as_json::<Vec<String>>()
 							.await?,
 					);
 				}
 				if internal {
 					out.extend(
-						config
-							.config_attr::<Vec<String>>(&host, "network.internalIps")
+						host.get_field_deep(["network", "internalIps"])
+							.await?
+							.as_json::<Vec<String>>()
 							.await?,
 					);
 				}

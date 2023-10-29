@@ -1,24 +1,26 @@
 use crate::Value;
 
-fn write_nix_obj_key_buf(k: &str, v: &Value, out: &mut String) {
-	if k.contains('.') {
-		out.push_str("\"");
-		out.push_str(k);
-		out.push_str("\"");
+pub fn write_identifier(k: &str, out: &mut String) {
+	if k.contains(['.', '\'', '\"', '\\', '\n', '\t', '\r', '$']) {
+		write_nix_str(k, out);
 	} else {
 		out.push_str(k);
 	}
+}
+
+fn write_nix_obj_key_buf(k: &str, v: &Value, out: &mut String) {
+	write_identifier(k, out);
 	match v {
 		Value::Object(o) if o.len() == 1 => {
 			let (k, v) = o.iter().next().unwrap();
 
-			out.push_str(".");
+			out.push('.');
 			write_nix_obj_key_buf(k, v, out);
 		}
 		v => {
 			out.push_str(" = ");
 			write_nix_buf(v, out);
-			out.push_str(";");
+			out.push(';');
 		}
 	}
 }

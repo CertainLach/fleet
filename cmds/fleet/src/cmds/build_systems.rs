@@ -121,11 +121,11 @@ async fn get_current_generation(config: &Config, host: &str) -> Result<Generatio
 	cmd.comparg("--profile", "/nix/var/nix/profiles/system")
 		.arg("--list-generations");
 	// Sudo is required due to --list-generations acquiring lock on the profile.
-	let data = config.run_string_on(&host, cmd, true).await?;
+	let data = config.run_string_on(host, cmd, true).await?;
 	let generations = data
 		.split('\n')
 		.map(|e| e.trim())
-		.filter(|&l| l != "")
+		.filter(|&l| !l.is_empty())
 		.filter_map(|g| {
 			let gen: Option<Generation> = try {
 				let mut parts = g.split_whitespace();
@@ -170,13 +170,13 @@ async fn get_current_generation(config: &Config, host: &str) -> Result<Generatio
 async fn systemctl_stop(config: &Config, host: &str, unit: &str) -> Result<()> {
 	let mut cmd = MyCommand::new("systemctl");
 	cmd.arg("stop").arg(unit);
-	config.run_on(&host, cmd, true).await
+	config.run_on(host, cmd, true).await
 }
 
 async fn systemctl_start(config: &Config, host: &str, unit: &str) -> Result<()> {
 	let mut cmd = MyCommand::new("systemctl");
 	cmd.arg("start").arg(unit);
-	config.run_on(&host, cmd, true).await
+	config.run_on(host, cmd, true).await
 }
 
 async fn execute_upload(
@@ -195,7 +195,7 @@ async fn execute_upload(
 	if !build.disable_rollback {
 		let _span = info_span!("preparing").entered();
 		info!("preparing for rollback");
-		let generation = get_current_generation(&config, &host).await?;
+		let generation = get_current_generation(config, host).await?;
 		info!(
 			"rollback target would be {} {}",
 			generation.id, generation.datetime
@@ -203,7 +203,7 @@ async fn execute_upload(
 		{
 			let mut cmd = MyCommand::new("sh");
 			cmd.arg("-c").arg(format!("mark=$(mktemp -p /etc -t fleet_rollback_marker.XXXXX) && echo -n {} > $mark && mv --no-clobber $mark /etc/fleet_rollback_marker", generation.id));
-			if let Err(e) = config.run_on(&host, cmd, true).await {
+			if let Err(e) = config.run_on(host, cmd, true).await {
 				error!("failed to set rollback marker: {e}");
 				failed = true;
 			}
@@ -225,7 +225,7 @@ async fn execute_upload(
 				.arg("systemctl")
 				.arg("start")
 				.arg("rollback-watchdog.service");
-			if let Err(e) = config.run_on(&host, cmd, true).await {
+			if let Err(e) = config.run_on(host, cmd, true).await {
 				error!("failed to schedule rollback run: {e}");
 				failed = true;
 			}
@@ -236,7 +236,7 @@ async fn execute_upload(
 		let mut cmd = MyCommand::new("nix-env");
 		cmd.comparg("--profile", "/nix/var/nix/profiles/system")
 			.comparg("--set", &built);
-		if let Err(e) = config.run_on(&host, cmd, true).await {
+		if let Err(e) = config.run_on(host, cmd, true).await {
 			error!("failed to switch generation: {e}");
 			failed = true;
 		}
@@ -249,7 +249,7 @@ async fn execute_upload(
 		switch_script.push("switch-to-configuration");
 		let mut cmd = MyCommand::new(switch_script);
 		cmd.arg(action.name());
-		if let Err(e) = config.run_on(&host, cmd, true).in_current_span().await {
+		if let Err(e) = config.run_on(host, cmd, true).in_current_span().await {
 			error!("failed to activate: {e}");
 			failed = true;
 		}
@@ -257,7 +257,7 @@ async fn execute_upload(
 	if !build.disable_rollback {
 		if failed {
 			info!("executing rollback");
-			if let Err(e) = systemctl_start(&config, &host, "rollback-watchdog.service")
+			if let Err(e) = systemctl_start(config, host, "rollback-watchdog.service")
 				.instrument(info_span!("rollback"))
 				.await
 			{
@@ -267,23 +267,23 @@ async fn execute_upload(
 			info!("trying to mark upgrade as successful");
 			let mut cmd = MyCommand::new("rm");
 			cmd.arg("-f").arg("/etc/fleet_rollback_marker");
-			if let Err(e) = config.run_on(&host, cmd, true).in_current_span().await {
+			if let Err(e) = config.run_on(host, cmd, true).in_current_span().await {
 				error!("failed to remove rollback marker. This is bad, as the system will be rolled back by watchdog: {e}")
 			}
 		}
 		info!("disarming watchdog, just in case");
-		if let Err(_e) = systemctl_stop(&config, &host, "rollback-watchdog.timer").await {
+		if let Err(_e) = systemctl_stop(config, host, "rollback-watchdog.timer").await {
 			// It is ok, if there was no reboot - then timer might not be running.
 		}
 		if action.should_schedule_rollback_run() {
-			if let Err(e) = systemctl_stop(&config, &host, "rollback-watchdog-run.timer").await {
+			if let Err(e) = systemctl_stop(config, host, "rollback-watchdog-run.timer").await {
 				error!("failed to disarm rollback run: {e}");
 			}
 		}
 	} else {
 		let mut cmd = MyCommand::new("rm");
 		cmd.arg("-f").arg("/etc/fleet_rollback_marker");
-		if let Err(_e) = config.run_on(&host, cmd, true).in_current_span().await {
+		if let Err(_e) = config.run_on(host, cmd, true).in_current_span().await {
 			// Marker might not exist, yet better try to remove it.
 		}
 	}
@@ -341,7 +341,7 @@ impl BuildSystems {
 						sign.arg("nix")
 							.arg("store")
 							.arg("sign")
-							.comparg("-k", "/etc/nix/private-key")
+							.comparg("--key-file", "/etc/nix/private-key")
 							.arg("-r")
 							.arg(&built);
 						if let Err(e) = sign.run_nix().await {
@@ -353,7 +353,7 @@ impl BuildSystems {
 						let mut nix = MyCommand::new("nix");
 						nix.arg("copy")
 							.arg("--substitute-on-destination")
-							.comparg("--to", format!("ssh-ng://root@{host}"))
+							.comparg("--to", format!("ssh-ng://{host}"))
 							.arg(&built);
 						match nix.run_nix().await {
 							Ok(()) => break,
@@ -423,17 +423,17 @@ impl BuildSystems {
 		let hosts = config.list_hosts().await?;
 		let set = LocalSet::new();
 		let this = &self;
-		for host in hosts.iter() {
-			if config.should_skip(host) {
+		for host in hosts.into_iter() {
+			if config.should_skip(&host.name) {
 				continue;
 			}
 			let config = config.clone();
-			let host = host.clone();
 			let this = this.clone();
-			let span = info_span!("deployment", host = field::display(&host));
+			let span = info_span!("deployment", host = field::display(&host.name));
+			let hostname = host.name;
 			set.spawn_local(
 				(async move {
-					match this.build_task(config, host).await {
+					match this.build_task(config, hostname).await {
 						Ok(_) => {}
 						Err(e) => {
 							error!("failed to deploy host: {}", e)

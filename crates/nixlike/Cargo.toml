@@ -5,11 +5,10 @@ edition = "2021"
 
 [dependencies]
 alejandra = {git = "https://github.com/kamadorueda/alejandra"}
-rnix = "0.10.2"
-linked-hash-map = "0.5.4"
-peg = "0.8.0"
-serde = "1.0.130"
-thiserror = "1.0.29"
-serde_json = "1.0.91"
-ron = "0.8.0"
+linked-hash-map = "0.5.6"
+peg = "0.8.2"
+serde = "1.0.190"
+thiserror = "1.0.50"
+serde_json = "1.0.107"
+ron = "0.8.1"
 serde-transcode = "1.1.1"

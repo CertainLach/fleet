@@ -3,15 +3,18 @@ use crate::{
 	host::Config,
 };
 use anyhow::{bail, ensure, Context, Result};
+use chrono::Utc;
 use clap::Parser;
 use futures::{StreamExt, TryStreamExt};
+use owo_colors::OwoColorize;
 use std::{
 	collections::HashSet,
 	io::{self, Cursor, Read},
 	path::PathBuf,
 };
+use tabled::{Table, Tabled};
 use tokio::fs::read_to_string;
-use tracing::{error, info, warn};
+use tracing::{error, info, info_span, warn};
 
 #[derive(Parser)]
 pub enum Secrets {
@@ -73,6 +76,7 @@ pub enum Secrets {
 		#[clap(long)]
 		prefer_identities: Vec<String>,
 	},
+	List {},
 }
 
 impl Secrets {
@@ -80,10 +84,10 @@ impl Secrets {
 		match self {
 			Secrets::ForceKeys => {
 				for host in config.list_hosts().await? {
-					if config.should_skip(&host) {
+					if config.should_skip(&host.name) {
 						continue;
 					}
-					config.key(&host).await?;
+					config.key(&host.name).await?;
 				}
 			}
 			Secrets::AddShared {
@@ -128,7 +132,8 @@ impl Secrets {
 					FleetSharedSecret {
 						owners: machines,
 						secret: FleetSecret {
-							expire_at: None,
+							created_at: Utc::now(),
+							expires_at: None,
 							secret,
 							public: match (public, public_file) {
 								(Some(v), None) => Some(v),
@@ -175,7 +180,8 @@ impl Secrets {
 					&machine,
 					name,
 					FleetSecret {
-						expire_at: None,
+						created_at: Utc::now(),
+						expires_at: None,
 						secret,
 						public: match (public, public_file) {
 							(Some(v), None) => Some(v),
@@ -291,7 +297,7 @@ impl Secrets {
 					target_recipients.into_iter().collect::<Result<Vec<_>>>()?;
 
 				let encrypted = config
-					.reencrypt_on_host(&identity_holder, secret.secret.secret, target_recipients)
+					.reencrypt_on_host(identity_holder, secret.secret.secret, target_recipients)
 					.await?;
 
 				secret.owners = target_machines;
@@ -300,13 +306,14 @@ impl Secrets {
 			}
 			Secrets::Regenerate { prefer_identities } => {
 				{
-					let expected_shared_set =
-						config.shared_config_attr_names("sharedSecrets").await?;
-					let expected_shared_set = expected_shared_set.iter().collect::<HashSet<_>>();
-					let shared_set = config.list_shared();
-					let shared_set = shared_set.iter().collect::<HashSet<_>>();
+					let expected_shared_set = config
+						.list_configured_shared()
+						.await?
+						.into_iter()
+						.collect::<HashSet<_>>();
+					let shared_set = config.list_shared().into_iter().collect::<HashSet<_>>();
 					for removed in expected_shared_set.difference(&shared_set) {
-						warn!("secret needs to be generated: {removed}")
+						error!("secret needs to be generated: {removed}")
 					}
 				}
 				let mut to_remove = Vec::new();
@@ -314,7 +321,8 @@ impl Secrets {
 					info!("updating secret: {name}");
 					let mut data = config.shared_secret(name)?;
 					let expected_owners: Vec<String> = config
-						.shared_config_attr(&format!("sharedSecrets.\"{name}\".expectedOwners"))
+						.config_field
+						.get_json_deep(["sharedSecrets", name, "expectedOwners"])
 						.await?;
 					if expected_owners.is_empty() {
 						warn!("secret was removed from fleet config: {name}, removing from data");
@@ -326,7 +334,8 @@ impl Secrets {
 					let should_remove = set.difference(&expected_set).next().is_some();
 					if set != expected_set {
 						let owner_dependent: bool = config
-							.shared_config_attr(&format!("sharedSecrets.\"{name}\".ownerDependent"))
+							.config_field
+							.get_json_deep(["sharedSecrets", name, "ownerDependent"])
 							.await?;
 						if !owner_dependent {
 							warn!("reencrypting secret '{name}' for new owner set");
@@ -355,7 +364,7 @@ impl Secrets {
 
 							let encrypted = config
 								.reencrypt_on_host(
-									&identity_holder,
+									identity_holder,
 									data.secret.secret,
 									target_recipients,
 								)
@@ -364,13 +373,6 @@ impl Secrets {
 							data.secret.secret = encrypted;
 							data.owners = expected_owners;
 							config.replace_shared(name.to_owned(), data);
-						} else if let Some(generator) = config
-							.shared_config_attr::<Option<String>>(&format!(
-								"sharedSecrets.\"{name}\".generator"
-							))
-							.await?
-						{
-							todo!("regenerate secret {name} with {generator}");
 						} else {
 							error!("secret '{name}' should be regenerated manually");
 						}
@@ -381,6 +383,39 @@ impl Secrets {
 				for k in to_remove {
 					config.remove_shared(&k);
 				}
+			}
+			Secrets::List {} => {
+				let _span = info_span!("loading secrets").entered();
+				let configured = config.list_configured_shared().await?;
+				#[derive(Tabled)]
+				struct SecretDisplay {
+					#[tabled(rename = "Name")]
+					name: String,
+					#[tabled(rename = "Owners")]
+					owners: String,
+				}
+				let mut table = vec![];
+				for name in configured.iter().cloned() {
+					let config = config.clone();
+					let expected_owners = config.shared_secret_expected_owners(&name).await?;
+					let data = config.shared_secret(&name)?;
+					let owners = data
+						.owners
+						.iter()
+						.map(|o| {
+							if expected_owners.contains(o) {
+								o.green().to_string()
+							} else {
+								o.red().to_string()
+							}
+						})
+						.collect::<Vec<_>>();
+					table.push(SecretDisplay {
+						owners: owners.join(", "),
+						name,
+					})
+				}
+				info!("loaded\n{}", Table::new(table).to_string())
 			}
 		}
 		Ok(())

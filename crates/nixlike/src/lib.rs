@@ -119,6 +119,12 @@ pub fn serialize<S: Serialize>(value: S) -> Result<String, Error> {
 	Ok(serialize_value_pretty(value))
 }
 
+pub fn format_identifier(i: &str) -> String {
+	let mut out = String::new();
+	to_string::write_identifier(i, &mut out);
+	out
+}
+
 #[test]
 fn test() {
 	assert_eq!(serialize("Hello\nworld").unwrap(), "\"Hello\\nworld\"\n");

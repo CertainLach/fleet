@@ -6,3 +6,4 @@ Early prototype stage, yet it is used in production
 
 - Modules can configure multiple hosts at once (I.e for wireguard/kubernetes installation)
 - Secrets can be securely stored in Git (No one except target hosts can decrypt them), automatically regenerated, reencrypted, etc.
+- Automatic rollback on deployment failure, which will work, as long as system is passing initrd stage (So still be carefull with root filesystem mount)

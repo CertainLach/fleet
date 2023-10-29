@@ -12,7 +12,7 @@ pub fn parse_os(os: &OsStr) -> Result<Vec<OsString>> {
 		})
 		.collect())
 }
-pub fn parse(s: &str) -> Result<Vec<OsString>> {
-	let osstr = OsString::try_from(s)?;
-	parse_os(&osstr)
-}
+// pub fn parse(s: &str) -> Result<Vec<OsString>> {
+// 	let osstr = OsString::try_from(s)?;
+// 	parse_os(&osstr)
+// }

@@ -1,19 +1,18 @@
 use std::{
-	cell::{Ref, RefCell, RefMut},
 	env::current_dir,
 	ffi::OsString,
 	io::Write,
 	ops::Deref,
 	path::PathBuf,
-	sync::Arc,
+	sync::{Arc, Mutex, MutexGuard},
 };
 
 use anyhow::{bail, Context, Result};
 use clap::{ArgGroup, Parser};
-use serde::de::DeserializeOwned;
 use tempfile::NamedTempFile;
 
 use crate::{
+	better_nix_eval::{Field, NixSessionPool},
 	command::MyCommand,
 	fleetdata::{FleetData, FleetSecret, FleetSharedSecret},
 };
@@ -22,8 +21,12 @@ pub struct FleetConfigInternals {
 	pub local_system: String,
 	pub directory: PathBuf,
 	pub opts: FleetOpts,
-	pub data: RefCell<FleetData>,
+	pub data: Mutex<FleetData>,
 	pub nix_args: Vec<OsString>,
+	// fleetConfigurations.<name>
+	pub fleet_field: Field,
+	// fleet_config.configUnchecked
+	pub config_field: Field,
 }
 
 #[derive(Clone)]
@@ -35,6 +38,10 @@ impl Deref for Config {
 	fn deref(&self) -> &Self::Target {
 		&self.0
 	}
+}
+
+pub struct ConfigHost {
+	pub name: String,
 }
 
 impl Config {
@@ -60,7 +67,6 @@ impl Config {
 		}
 		command.run().await
 	}
-	#[must_use]
 	pub async fn run_string_on(
 		&self,
 		host: &str,
@@ -86,52 +92,39 @@ impl Config {
 		str
 	}
 
-	pub async fn list_hosts(&self) -> Result<Vec<String>> {
-		let mut cmd = MyCommand::new("nix");
-		cmd.arg("eval")
-			.arg(self.configuration_attr_name("configuredHosts"))
-			.args(["--apply", "builtins.attrNames", "--json", "--show-trace"])
-			.args(&self.nix_args);
-		cmd.run_nix_json().await
+	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
+		let names = self.fleet_field
+			.get_field_deep(["configuredHosts"])
+			.await?
+			.list_fields()
+			.await?;
+		 let mut out = vec![];
+		 for name in names {
+			out.push(ConfigHost {
+				name,
+			})
+		 }
+		 Ok(out)
 	}
-	pub async fn shared_config_attr<T: DeserializeOwned>(&self, attr: &str) -> Result<T> {
-		let mut cmd = MyCommand::new("nix");
-		cmd.arg("eval")
-			.arg(self.configuration_attr_name(&format!("configUnchecked.{}", attr)))
-			.args(["--json", "--show-trace"])
-			.args(&self.nix_args);
-		cmd.run_nix_json().await
-	}
-	pub async fn shared_config_attr_names(&self, attr: &str) -> Result<Vec<String>> {
-		let mut cmd = MyCommand::new("nix");
-		cmd.arg("eval")
-			.arg(self.configuration_attr_name(&format!("configUnchecked.{}", attr)))
-			.args(["--apply", "builtins.attrNames"])
-			.args(["--json", "--show-trace"])
-			.args(&self.nix_args);
-		cmd.run_nix_json().await
-	}
-	pub async fn config_attr<T: DeserializeOwned>(&self, host: &str, attr: &str) -> Result<T> {
-		let mut cmd = MyCommand::new("nix");
-		cmd.arg("eval")
-			.arg(
-				self.configuration_attr_name(&format!(
-					"configuredSystems.{}.config.{}",
-					host, attr
-				)),
-			)
-			.args(["--json", "--show-trace"])
-			.args(&self.nix_args);
-		cmd.run_nix_json().await
+	pub async fn system_config(&self, host: &str) -> Result<Field> {
+		self.fleet_field.get_field_deep(["configuredSystems", host, "config"]).await
 	}
 
-	pub(super) fn data(&self) -> Ref<FleetData> {
-		self.data.borrow()
+	pub(super) fn data(&self) -> MutexGuard<FleetData> {
+		self.data.lock().unwrap()
 	}
-	pub(super) fn data_mut(&self) -> RefMut<FleetData> {
-		self.data.borrow_mut()
+	pub(super) fn data_mut(&self) -> MutexGuard<FleetData> {
+		self.data.lock().unwrap()
 	}
-
+	/// Shared secrets configured in fleet.nix or in flake
+	pub async fn list_configured_shared(&self) -> Result<Vec<String>> {
+		self.config_field
+			.get_field("sharedSecrets")
+			.await?
+			.list_fields()
+			.await
+	}
+	/// Shared secrets configured in fleet.nix
 	pub fn list_shared(&self) -> Vec<String> {
 		let data = self.data();
 		data.shared_secrets.keys().cloned().collect()
@@ -149,13 +142,6 @@ impl Config {
 		data.shared_secrets.remove(secret);
 	}
 
-	pub fn list_secrets(&self, host: &str) -> Vec<String> {
-		let data = self.data();
-		let Some(host_secrets) = data.host_secrets.get(host) else {
-			return Vec::new();
-		};
-		host_secrets.keys().cloned().collect()
-	}
 	pub fn has_secret(&self, host: &str, secret: &str) -> bool {
 		let data = self.data();
 		let Some(host_secrets) = data.host_secrets.get(host) else {
@@ -180,7 +166,7 @@ impl Config {
 			.context("failed to call remote host for decrypt")?
 			.trim()
 			.to_owned();
-		Ok(z85::decode(encoded).context("bad encoded data? outdated host?")?)
+		z85::decode(encoded).context("bad encoded data? outdated host?")
 	}
 	pub async fn reencrypt_on_host(
 		&self,
@@ -201,10 +187,9 @@ impl Config {
 			.context("failed to call remote host for decrypt")?
 			.trim()
 			.to_owned();
-		Ok(z85::decode(encoded).context("bad encoded data? outdated host?")?)
+		z85::decode(encoded).context("bad encoded data? outdated host?")
 	}
 
-	#[must_use]
 	pub fn host_secret(&self, host: &str, secret: &str) -> Result<FleetSecret> {
 		let data = self.data();
 		let Some(host_secrets) = data.host_secrets.get(host) else {
@@ -215,7 +200,6 @@ impl Config {
 		};
 		Ok(secret.clone())
 	}
-	#[must_use]
 	pub fn shared_secret(&self, secret: &str) -> Result<FleetSharedSecret> {
 		let data = self.data();
 		let Some(secret) = data.shared_secrets.get(secret) else {
@@ -223,13 +207,20 @@ impl Config {
 		};
 		Ok(secret.clone())
 	}
+	pub async fn shared_secret_expected_owners(&self, secret: &str) -> Result<Vec<String>> {
+		self.config_field
+			.get_field_deep(["sharedSecrets", secret, "expectedOwners"])
+			.await?
+			.as_json()
+			.await
+	}
 
 	pub fn save(&self) -> Result<()> {
 		let mut tempfile = NamedTempFile::new_in(self.directory.clone())?;
 		let data = nixlike::serialize(&self.data() as &FleetData)?;
 		tempfile.write_all(
 			format!(
-				"# This file contains fleet state and shouldn't be edited by hand\n\n{}\n",
+				"# This file contains fleet state and shouldn't be edited by hand\n\n{}\n\n# vim: ts=2 et nowrap\n",
 				data
 			)
 			.as_bytes(),
@@ -259,18 +250,34 @@ pub struct FleetOpts {
 	// TODO: unhardcode x86_64-linux
 	/// Override detected system for host, to perform builds via
 	/// binfmt-declared qemu instead of trying to crosscompile
-	#[clap(long, default_value = "x86_64-linux")]
+	#[clap(long, default_value = "detect")]
 	pub local_system: String,
 }
 
 impl FleetOpts {
 	pub async fn build(mut self, nix_args: Vec<OsString>) -> Result<Config> {
-		let local_system = self.local_system.clone();
 		if self.localhost.is_none() {
 			self.localhost
 				.replace(hostname::get().unwrap().to_str().unwrap().to_owned());
 		}
 		let directory = current_dir()?;
+
+		let pool = NixSessionPool::new(directory.as_os_str().to_owned(), nix_args.clone()).await?;
+		let root_field = pool.get().await?;
+
+		if self.local_system == "detect" {
+			let builtins_field = Field::field(root_field.clone(), "builtins").await?;
+			let system = builtins_field.get_field("currentSystem").await?;
+			self.local_system = system.as_json().await?;
+		}
+		let local_system = self.local_system.clone();
+
+		let fleet_root = Field::field(root_field, "fleetConfigurations").await?;
+
+		let fleet_field = fleet_root
+			.get_field_deep(["default", &local_system])
+			.await?;
+		let config_field = fleet_field.get_field("configUnchecked").await?;
 
 		let mut fleet_data_path = directory.clone();
 		fleet_data_path.push("fleet.nix");
@@ -283,6 +290,8 @@ impl FleetOpts {
 			data,
 			local_system,
 			nix_args,
+			fleet_field,
+			config_field,
 		})))
 	}
 }

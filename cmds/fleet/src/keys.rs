@@ -3,6 +3,7 @@ use std::str::FromStr;
 use crate::command::MyCommand;
 use crate::host::Config;
 use anyhow::{anyhow, Result};
+use itertools::Itertools;
 use tracing::warn;
 
 impl Config {
@@ -40,9 +41,15 @@ impl Config {
 		age::ssh::Recipient::from_str(&key).map_err(|e| anyhow!("parse recipient error: {:?}", e))
 	}
 
+	#[allow(dead_code)]
 	pub async fn orphaned_data(&self) -> Result<Vec<String>> {
 		let mut out = Vec::new();
-		let host_names = self.list_hosts().await?;
+		let host_names = self
+			.list_hosts()
+			.await?
+			.into_iter()
+			.map(|h| h.name)
+			.collect_vec();
 		for hostname in self
 			.data()
 			.hosts

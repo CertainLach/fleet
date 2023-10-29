@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use log::{error, info, warn};
 use nix::sys::stat::Mode;
-use nix::unistd::{chown, Group, User};
+use nix::unistd::{User, Group, chown};
 use serde::{Deserialize, Deserializer};
 use std::fmt::{self, Display};
 use std::fs::{self, File};
@@ -161,7 +161,7 @@ fn init_secret(identity: &age::ssh::Identity, value: DataItem) -> Result<()> {
 	let mut hashed = File::create(&value.secret_path)?;
 
 	// File is owned by root, and only root can modify it
-	let decrypted = decrypt(&secret, identity)?;
+	let decrypted = decrypt(secret, identity)?;
 	if decrypted.is_empty() {
 		warn!("secret is decoded as empty, something is broken?");
 	}

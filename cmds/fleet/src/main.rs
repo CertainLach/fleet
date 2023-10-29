@@ -1,9 +1,12 @@
 #![feature(try_blocks)]
 
-pub mod cmds;
-pub mod command;
-pub mod host;
-pub mod keys;
+pub(crate) mod cmds;
+pub(crate) mod command;
+pub(crate) mod host;
+pub(crate) mod keys;
+
+pub(crate) mod extra_args;
+pub(crate) mod better_nix_eval;
 
 mod fleetdata;
 
@@ -14,12 +17,17 @@ use anyhow::{bail, Result};
 use clap::Parser;
 
 use cmds::{build_systems::BuildSystems, info::Info, secrets::Secrets};
+use futures::future::LocalBoxFuture;
+use futures::stream::FuturesUnordered;
+use futures::TryStreamExt;
 use host::{Config, FleetOpts};
 use indicatif::{ProgressState, ProgressStyle};
-use tokio::process::Command;
 use tracing::{info, metadata::LevelFilter};
+use tracing::{info_span, Instrument};
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::{prelude::*, EnvFilter};
+
+use crate::command::MyCommand;
 
 #[derive(Parser)]
 struct Prefetch {}
@@ -31,20 +39,28 @@ impl Prefetch {
 			info!("nothing to prefetch: no prefetch directory");
 			return Ok(());
 		}
+		let tasks = <FuturesUnordered<LocalBoxFuture<Result<()>>>>::new();
 		for entry in std::fs::read_dir(&prefetch_dir)? {
-			let entry = entry?;
-			if !entry.metadata()?.is_file() {
-				bail!("only files should exist in prefetch directory");
-			}
-			info!("prefetching {:?}", entry.file_name());
-			let mut path = OsString::new();
-			path.push("file://");
-			path.push(entry.path());
-			let status = Command::new("nix-prefetch-url").arg(path).status().await?;
-			if !status.success() {
-				bail!("failed with {status}");
-			}
+			tasks.push(Box::pin(async {
+				let entry = entry?;
+				if !entry.metadata()?.is_file() {
+					bail!("only files should exist in prefetch directory");
+				}
+				let span = info_span!(
+					"prefetching",
+					name = entry.file_name().to_string_lossy().as_ref()
+				);
+				let mut path = OsString::new();
+				path.push("file://");
+				path.push(entry.path());
+
+				let mut status = MyCommand::new("nix");
+				status.arg("store").arg("prefetch-file").arg(path);
+				status.run_nix_string().instrument(span).await?;
+				Ok(())
+			}));
 		}
+		tasks.try_collect::<Vec<()>>().await?;
 		Ok(())
 	}
 }
@@ -81,8 +97,28 @@ async fn run_command(config: &Config, command: Opts) -> Result<()> {
 	Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+// fn main() -> Result<()> {
+// 	let pool = r2d2::Builder::<NixSessionPool>::new()
+// 		.min_idle(Some(1))
+// 		.max_lifetime(Some(Duration::from_secs(10)))
+// 		.build(NixSessionPool {
+// 			flake: ".".to_owned(),
+// 			nix_args: vec![],
+// 		})?;
+// 	let conn = pool.get()?;
+// 	let field = Field::root(conn);
+// 	// let builtins = field.get_field("builtins")?;
+// 	let cur_sys: String = field.get_field("builtins")?.as_json()?;
+// 	eprintln!("current system = {cur_sys}");
+// 	let v = field.get_field("fleetConfigurations")?;
+// 	eprintln!("configs = {:?}", v.list_fields()?);
+// 	let d = v.get_field("default")?;
+// 	dbg!(d.list_fields());
+// 	Ok(())
+// }
+//
+
+fn setup_logging() {
 	let indicatif_layer = IndicatifLayer::new().with_progress_style(
 		ProgressStyle::with_template(
 			"{color_start}{span_child_prefix} {span_name}{{{span_fields}}}{color_end} {wide_msg} {color_start}{pos:>7}/{len:7}{elapsed}{color_end}",
@@ -124,10 +160,19 @@ async fn main() -> Result<()> {
 		)
 		.with(indicatif_layer)
 		.init();
-	info!("Starting");
-	let mut os_args = std::env::args_os();
-	let opts = RootOpts::parse_from((&mut os_args).take_while(|v| v != "--"));
-	let config = opts.fleet_opts.build(os_args.collect()).await?;
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+	setup_logging();
+	let _ = better_nix_eval::TOKIO_RUNTIME.set(tokio::runtime::Handle::current());
+
+	let nix_args = std::env::var_os("NIX_ARGS")
+		.map(|a| extra_args::parse_os(&a))
+		.transpose()?
+		.unwrap_or_default();
+	let opts = RootOpts::parse();
+	let config = opts.fleet_opts.build(nix_args).await?;
 
 	match run_command(&config, opts.command).await {
 		Ok(()) => {

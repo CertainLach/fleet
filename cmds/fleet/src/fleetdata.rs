@@ -44,9 +44,11 @@ pub struct FleetSharedSecret {
 #[serde(rename_all = "camelCase")]
 #[must_use]
 pub struct FleetSecret {
+	#[serde(default = "Utc::now")]
+	pub created_at: DateTime<Utc>,
 	#[serde(default)]
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub expire_at: Option<DateTime<Utc>>,
+	#[serde(skip_serializing_if = "Option::is_none", alias = "expire_at")]
+	pub expires_at: Option<DateTime<Utc>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub public: Option<String>,
 	#[serde(

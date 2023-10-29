@@ -1,11 +1,14 @@
-use std::{collections::HashMap, ffi::OsStr, process::Stdio, task::Poll};
-
-use anyhow::{Context, Result};
-use futures::StreamExt;
-use serde::{
-	de::{DeserializeOwned, Visitor},
-	Deserialize,
+use std::{
+	collections::HashMap,
+	ffi::OsStr,
+	process::Stdio,
+	sync::{Arc, Mutex},
+	task::Poll,
 };
+
+use anyhow::Result;
+use futures::StreamExt;
+use serde::{de::Visitor, Deserialize};
 use tokio::{io::AsyncRead, process::Command, select};
 use tokio_util::codec::{BytesCodec, FramedRead, LinesCodec};
 use tracing::{info, info_span, warn, Span};
@@ -49,12 +52,12 @@ impl MyCommand {
 		if !self.env.is_empty() {
 			out.push("env".to_owned());
 			for (k, v) in self.env {
-				assert!(!k.contains("="));
+				assert!(!k.contains('='));
 				out.push(format!("{k}={v}"));
 			}
 		}
 		out.push(self.command);
-		out.extend(self.args.into_iter());
+		out.extend(self.args);
 		out
 	}
 	fn into_string(self) -> String {
@@ -63,7 +66,7 @@ impl MyCommand {
 			out.push_str("env");
 			for (k, v) in self.env {
 				out.push(' ');
-				assert!(!k.contains("="));
+				assert!(!k.contains('='));
 				escape_bash(&k, &mut out);
 				out.push('=');
 				escape_bash(&v, &mut out);
@@ -136,10 +139,6 @@ impl MyCommand {
 		let v = run_nix_inner_stdout(str, cmd, &mut PlainHandler).await?;
 		Ok(v)
 	}
-	pub async fn run_nix_json<T: DeserializeOwned>(self) -> Result<T> {
-		let str = self.run_nix_string().await?;
-		serde_json::from_str(&str).with_context(|| format!("{:?}", str))
-	}
 
 	pub async fn run_nix_string(self) -> Result<String> {
 		let str = self.clone().into_string();
@@ -172,38 +171,55 @@ async fn run_nix_inner_stdout(
 	cmd: Command,
 	handler: &mut dyn Handler,
 ) -> Result<String> {
-	Ok(run_nix_inner_raw(str, cmd, true, handler)
+	Ok(run_nix_inner_raw(str, cmd, true, handler, None)
 		.await?
 		.expect("has out"))
 }
 async fn run_nix_inner(str: String, cmd: Command, handler: &mut dyn Handler) -> Result<()> {
-	let v = run_nix_inner_raw(str, cmd, false, handler).await?;
+	let v = run_nix_inner_raw(str, cmd, false, handler, None).await?;
 	assert!(v.is_none());
 	Ok(())
 }
 
-trait Handler {
-	fn handle_err(&mut self, e: &str);
-	fn handle_info(&mut self, e: &str);
+pub trait Handler: Send {
+	fn handle_line(&mut self, e: &str);
+}
+
+pub struct ClonableHandler<H>(Arc<Mutex<H>>);
+impl<H> Clone for ClonableHandler<H> {
+	fn clone(&self) -> Self {
+		Self(self.0.clone())
+	}
+}
+impl<H> ClonableHandler<H> {
+	pub fn new(inner: H) -> Self {
+		Self(Arc::new(Mutex::new(inner)))
+	}
+}
+impl<H: Handler> Handler for ClonableHandler<H> {
+	fn handle_line(&mut self, e: &str) {
+		self.0.lock().unwrap().handle_line(e)
+	}
 }
 
 struct PlainHandler;
 impl Handler for PlainHandler {
-	fn handle_err(&mut self, e: &str) {
+	fn handle_line(&mut self, e: &str) {
 		info!(target: "log", "{e}");
 	}
+}
 
-	fn handle_info(&mut self, e: &str) {
-		info!(target: "log", "{e}");
-	}
+pub struct NoopHandler;
+impl Handler for NoopHandler {
+	fn handle_line(&mut self, _e: &str) {}
 }
 
 #[derive(Default)]
-struct NixHandler {
+pub struct NixHandler {
 	spans: HashMap<u64, Span>,
 }
 impl Handler for NixHandler {
-	fn handle_err(&mut self, e: &str) {
+	fn handle_line(&mut self, e: &str) {
 		if let Some(e) = e.strip_prefix("@nix ") {
 			let log: NixLog = match serde_json::from_str(e) {
 				Ok(l) => l,
@@ -214,6 +230,7 @@ impl Handler for NixHandler {
 			};
 			match log {
 				NixLog::Msg { msg, raw_msg, .. } => {
+					#[allow(clippy::nonminimal_bool)]
 					if !(msg.starts_with("\u{1b}[35;1mwarning:\u{1b}[0m Git tree '") && msg.ends_with("' is dirty"))
 					&& !msg.starts_with("\u{1b}[35;1mwarning:\u{1b}[0m not writing modified lock file of flake")
 					&& msg != "\u{1b}[35;1mwarning:\u{1b}[0m \u{1b}[31;1merror:\u{1b}[0m SQLite database '\u{1b}[35;1m/nix/var/nix/db/db.sqlite\u{1b}[0m' is busy" {
@@ -397,11 +414,12 @@ impl Handler for NixHandler {
 				_ => warn!("unknown log: {:?}", log),
 			};
 		} else {
-			warn!(target = "nix", "unknown: {}", e.trim())
+			let e = e.trim();
+			if e.starts_with("Failed tcsetattr(TCSADRAIN): ") {
+				return;
+			}
+			info!("{e}")
 		}
-	}
-	fn handle_info(&mut self, o: &str) {
-		self.handle_err(o)
 	}
 }
 
@@ -409,9 +427,9 @@ async fn run_nix_inner_raw(
 	str: String,
 	mut cmd: Command,
 	want_stdout: bool,
-	handler: &mut dyn Handler,
+	err_handler: &mut dyn Handler,
+	mut out_handler: Option<&mut dyn Handler>,
 ) -> Result<Option<String>> {
-	info!("running {str}");
 	cmd.stderr(Stdio::piped());
 	cmd.stdout(Stdio::piped());
 	let mut child = cmd.spawn()?;
@@ -436,7 +454,7 @@ async fn run_nix_inner_raw(
 			e = err.next() => {
 				if let Some(e) = e {
 					let e = e?;
-					handler.handle_err(&e);
+					err_handler.handle_line(&e);
 				}
 			},
 			o = ob.next() => {
@@ -447,7 +465,12 @@ async fn run_nix_inner_raw(
 			o = ol.next() => {
 				if let Some(o) = o {
 					let o = o?;
-					handler.handle_info(&o);
+					if let Some(out) = out_handler.as_mut() {
+						out.handle_line(&o)
+					} else {
+						err_handler.handle_line(&o)
+					}
+					// out_handler.handle_info(&o);
 				}
 			},
 			code = child.wait() => {
@@ -461,6 +484,11 @@ async fn run_nix_inner_raw(
 	}
 
 	Ok(out_buf.map(String::from_utf8).transpose()?)
+}
+
+pub trait ErrorRecorder: Send {
+	/// Return true to discard message from logging
+	fn push_message(&mut self, msg: &str) -> bool;
 }
 
 #[derive(Debug)]

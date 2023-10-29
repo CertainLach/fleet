@@ -15,7 +15,7 @@
           inherit system; overlays = [ (import rust-overlay) ];
         };
       llvmPkgs = pkgs.buildPackages.llvmPackages_11;
-      rust = (pkgs.rustChannelOf { date = "2023-10-05"; channel = "nightly"; }).default.override { extensions = [ "rust-src" "rust-analyzer" ]; };
+      rust = (pkgs.rustChannelOf { date = "2023-10-20"; channel = "nightly"; }).default.override { extensions = [ "rust-src" "rust-analyzer" ]; };
       rustPlatform = pkgs.makeRustPlatform { cargo = rust; rustc = rust; };
     in
     {
@@ -29,6 +29,7 @@
 
           pkg-config
           openssl
+          bacon
         ];
       };
     });
