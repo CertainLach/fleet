@@ -11,7 +11,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 time = { version = "0.3.30", features = ["serde"] }
 tempfile = "3.8"
-once_cell = "1.18"
+once_cell = "1.18.0"
 hostname = "0.3.1"
 age-core = "0.9.0"
 peg = "0.8.2"
@@ -41,3 +41,6 @@ owo-colors = { version = "3.5.0", features = ["supports-color", "supports-colors
 r2d2 = "0.8.10"
 abort-on-drop = "0.2.2"
 unindent = "0.2.3"
+regex = "1.10.2"
+openssh = "0.10.1"
+human-repr = "1.1.0"

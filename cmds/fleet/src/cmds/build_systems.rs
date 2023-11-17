@@ -336,15 +336,14 @@ impl BuildSystems {
 				if !config.is_local(&host) {
 					info!("uploading system closure");
 					{
-						let mut sign = MyCommand::new("sudo");
+						let mut sign = MyCommand::new("nix");
 						// Private key for host machine is registered in nix-sign.nix
-						sign.arg("nix")
-							.arg("store")
+						sign.arg("store")
 							.arg("sign")
 							.comparg("--key-file", "/etc/nix/private-key")
 							.arg("-r")
 							.arg(&built);
-						if let Err(e) = sign.run_nix().await {
+						if let Err(e) = sign.sudo().run_nix().await {
 							warn!("Failed to sign store paths: {e}");
 						};
 					}

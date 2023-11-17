@@ -5,8 +5,8 @@ pub(crate) mod command;
 pub(crate) mod host;
 pub(crate) mod keys;
 
-pub(crate) mod extra_args;
 pub(crate) mod better_nix_eval;
+pub(crate) mod extra_args;
 
 mod fleetdata;
 
@@ -21,6 +21,7 @@ use futures::future::LocalBoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::TryStreamExt;
 use host::{Config, FleetOpts};
+use human_repr::HumanCount;
 use indicatif::{ProgressState, ProgressStyle};
 use tracing::{info, metadata::LevelFilter};
 use tracing::{info_span, Instrument};
@@ -121,9 +122,16 @@ async fn run_command(config: &Config, command: Opts) -> Result<()> {
 fn setup_logging() {
 	let indicatif_layer = IndicatifLayer::new().with_progress_style(
 		ProgressStyle::with_template(
-			"{color_start}{span_child_prefix} {span_name}{{{span_fields}}}{color_end} {wide_msg} {color_start}{pos:>7}/{len:7}{elapsed}{color_end}",
+			"{color_start}{span_child_prefix} {span_name}{{{span_fields}}}{color_end} {wide_msg} {color_start}{download_progress} {elapsed}{color_end}",
 		)
 		.unwrap()
+		.with_key("download_progress", |state: &ProgressState, writer: &mut dyn std::fmt::Write| {
+			let Some(len) = state.len() else {
+				return;
+			};
+			let pos = state.pos();
+			let _ = write!(writer, "{} / {}", pos.human_count_bare(), len.human_count_bare());
+		})
 		.with_key(
 			"color_start",
 			|state: &ProgressState, writer: &mut dyn std::fmt::Write| {

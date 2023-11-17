@@ -7,8 +7,9 @@ use std::{
 	sync::{Arc, Mutex, MutexGuard},
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{ArgGroup, Parser};
+use openssh::SessionBuilder;
 use tempfile::NamedTempFile;
 
 use crate::{
@@ -42,6 +43,16 @@ impl Deref for Config {
 
 pub struct ConfigHost {
 	pub name: String,
+}
+impl ConfigHost {
+	async fn open_session(&self) -> Result<openssh::Session> {
+		let mut session = SessionBuilder::default();
+
+		session
+			.connect(&self.name)
+			.await
+			.map_err(|e| anyhow!("ssh error: {e}"))
+	}
 }
 
 impl Config {
@@ -93,21 +104,22 @@ impl Config {
 	}
 
 	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
-		let names = self.fleet_field
+		let names = self
+			.fleet_field
 			.get_field_deep(["configuredHosts"])
 			.await?
 			.list_fields()
 			.await?;
-		 let mut out = vec![];
-		 for name in names {
-			out.push(ConfigHost {
-				name,
-			})
-		 }
-		 Ok(out)
+		let mut out = vec![];
+		for name in names {
+			out.push(ConfigHost { name })
+		}
+		Ok(out)
 	}
 	pub async fn system_config(&self, host: &str) -> Result<Field> {
-		self.fleet_field.get_field_deep(["configuredSystems", host, "config"]).await
+		self.fleet_field
+			.get_field_deep(["configuredSystems", host, "config"])
+			.await
 	}
 
 	pub(super) fn data(&self) -> MutexGuard<FleetData> {

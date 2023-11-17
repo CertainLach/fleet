@@ -1,4 +1,5 @@
 use std::{
+	borrow::Cow,
 	collections::HashMap,
 	ffi::OsStr,
 	process::Stdio,
@@ -6,8 +7,12 @@ use std::{
 	task::Poll,
 };
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use futures::StreamExt;
+use itertools::Either;
+use once_cell::sync::Lazy;
+use openssh::{OverSsh, Session};
+use regex::Regex;
 use serde::{de::Visitor, Deserialize};
 use tokio::{io::AsyncRead, process::Command, select};
 use tokio_util::codec::{BytesCodec, FramedRead, LinesCodec};
@@ -37,6 +42,7 @@ pub struct MyCommand {
 	command: String,
 	args: Vec<String>,
 	env: Vec<(String, String)>,
+	ssh_session: Option<Arc<Session>>,
 }
 impl MyCommand {
 	pub fn new(cmd: impl AsRef<OsStr>) -> Self {
@@ -45,6 +51,7 @@ impl MyCommand {
 			command: ostoutf8(cmd),
 			args: vec![],
 			env: vec![],
+			ssh_session: None,
 		}
 	}
 	fn into_args(self) -> Vec<String> {
@@ -90,6 +97,18 @@ impl MyCommand {
 		}
 		out
 	}
+	fn into_command_new(self) -> Result<Either<Command, openssh::OwningCommand<Arc<Session>>>> {
+		Ok(if let Some(session) = self.ssh_session.clone() {
+			let cmd = self.into_command();
+			Either::Right(
+				cmd.over_ssh(session)
+					.map_err(|e| anyhow!("ssh error: {e}"))?,
+			)
+		} else {
+			let cmd = self.into_command();
+			Either::Left(cmd)
+		})
+	}
 	pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
 		let arg = arg.as_ref();
 		self.args.push(ostoutf8(arg));
@@ -116,15 +135,25 @@ impl MyCommand {
 		self
 	}
 	pub fn sudo(self) -> Self {
-		let mut out = Self::new("sudo");
-		out.args(self.into_args());
-		out
+		if std::env::var_os("NO_SUDO").is_some() {
+			let mut out = Self::new("su");
+			out.arg("-c").arg(self.into_string());
+			out
+		} else {
+			let mut out = Self::new("sudo");
+			out.args(self.into_args());
+			out
+		}
 	}
 	pub fn ssh(self, on: impl AsRef<OsStr>) -> Self {
 		let mut out = Self::new("ssh");
 		out.arg(on).arg("--");
 		out.arg(self.into_string());
 		out
+	}
+	pub fn over_ssh(mut self, session: Arc<Session>) -> Self {
+		self.ssh_session = Some(session);
+		self
 	}
 
 	pub async fn run(self) -> Result<()> {
@@ -218,6 +247,11 @@ impl Handler for NoopHandler {
 pub struct NixHandler {
 	spans: HashMap<u64, Span>,
 }
+fn process_message(m: &str) -> Cow<'_, str> {
+	static OSC_CLEANER: Lazy<Regex> =
+		Lazy::new(|| Regex::new(r"\x1B\]([^\x07\x1C]*[\x07\x1C])?|\r").unwrap());
+	OSC_CLEANER.replace_all(m, "")
+}
 impl Handler for NixHandler {
 	fn handle_line(&mut self, e: &str) {
 		if let Some(e) = e.strip_prefix("@nix ") {
@@ -303,7 +337,7 @@ impl Handler for NixHandler {
 					{
 						let span = info_span!("job");
 						span.pb_start();
-						span.pb_set_message(text.trim());
+						span.pb_set_message(&process_message(text.trim()));
 						self.spans.insert(id, span);
 						info!(target: "nix", "{}", text);
 					}
@@ -383,7 +417,7 @@ impl Handler for NixHandler {
 				NixLog::Result { fields, id, typ } if typ == 101 && !fields.is_empty() => {
 					if let Some(span) = self.spans.get(&id) {
 						if let LogField::String(s) = &fields[0] {
-							span.pb_set_message(s.trim());
+							span.pb_set_message(&process_message(s.trim()));
 						} else {
 							warn!("bad fields: {fields:?}");
 						}
