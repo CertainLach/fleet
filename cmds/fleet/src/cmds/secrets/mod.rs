@@ -33,6 +33,10 @@ pub enum Secrets {
 		public: Option<String>,
 		#[clap(long)]
 		public_file: Option<PathBuf>,
+
+		/// Secret with this name already exists, override its value while keeping the same owners.
+		#[clap(long)]
+		readd: bool,
 	},
 	/// Add secret, data should be provided in stdin
 	Add {
@@ -91,12 +95,29 @@ impl Secrets {
 				}
 			}
 			Secrets::AddShared {
-				machines,
+				mut machines,
 				name,
 				force,
 				public,
 				public_file,
+				readd,
 			} => {
+				let exists = config.has_shared(&name);
+				if exists && !force && !readd {
+					bail!("secret already defined");
+				}
+				if readd {
+					// Fixme: use clap to limit this usage
+					ensure!(!force, "--force and --readd are not compatible");
+					ensure!(exists, "secret doesn't exists");
+					ensure!(
+						machines.is_empty(),
+						"you can't use machines argument for --readd"
+					);
+					let shared = config.shared_secret(&name)?;
+					machines = shared.owners;
+				}
+
 				let recipients = futures::stream::iter(machines.iter())
 					.then(|m| config.recipient(m))
 					.try_collect::<Vec<_>>()
@@ -123,10 +144,6 @@ impl Secrets {
 						encrypted
 					}
 				};
-
-				if config.has_shared(&name) && !force {
-					bail!("secret already defined");
-				}
 				config.replace_shared(
 					name,
 					FleetSharedSecret {
