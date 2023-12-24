@@ -11,8 +11,7 @@
       inherit nixpkgs hostNames;
     };
   in
-    # Top-level arg is the builder system (not the target system!)
-    nixpkgs.lib.genAttrs flake-utils.lib.defaultSystems (system: let
+    let
       withData = data: rec {
         root = nixpkgs.lib.evalModules {
           modules = (import ../modules/fleet/_modules.nix) ++ [config data];
@@ -36,21 +35,7 @@
                 inherit name;
                 value = nixpkgs.lib.nixosSystem {
                   system = configuredHosts.${name}.system;
-                  modules =
-                    configuredHosts.${name}.modules
-                    ++ extraModules
-                    ++ [
-                      ({...}: {
-                        nixpkgs.system = system;
-                        nixpkgs.localSystem.system = system;
-                        nixpkgs.crossSystem =
-                          if system == configuredHosts.${name}.system
-                          then null
-                          else {
-                            system = configuredHosts.${name}.system;
-                          };
-                      })
-                    ];
+                  modules = configuredHosts.${name}.modules ++ extraModules;
                   specialArgs = {
                     inherit fleetLib;
                     fleet = fleetLib.hostsToAttrs (host: configuredSystems.${host}.config);
@@ -60,19 +45,28 @@
             )
             (builtins.attrNames rootAssertWarn.config.hosts)
           );
-        buildSystems = {
+        buildSystems = {localSystem}: let
+          buildConfigurationModule = {config, ...}: {
+            # Equivalent to nixpkgs.localSystem
+            # nixpkgs.system = localSystem;
+            nixpkgs.buildPlatform.system = localSystem;
+          };
+        in {
           toplevel = builtins.mapAttrs (_name: value: value.config.system.build.toplevel) (configuredSystemsWithExtraModules [
+            buildConfigurationModule
             ({...}: {
               buildTarget = "toplevel";
             })
           ]);
           sdImage = builtins.mapAttrs (_name: value: value.config.system.build.sdImage) (configuredSystemsWithExtraModules [
+            buildConfigurationModule
             #(nixpkgs + "/nixos/modules/installer/sd-card/sd-image-aarch64-installer.nix")
             ({...}: {
               buildTarget = "sd-image";
             })
           ]);
           installationCd = builtins.mapAttrs (_name: value: value.config.system.build.isoImage) (configuredSystemsWithExtraModules [
+            buildConfigurationModule
             (nixpkgs + "/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix")
             ({lib, ...}: {
               buildTarget = "installation-cd";
@@ -91,5 +85,5 @@
       in {
         inherit (injectedData) configuredHosts configuredSecrets configuredSystems buildSystems configUnchecked;
       };
-    });
+    };
 }

@@ -5,7 +5,7 @@ use std::{env::current_dir, time::Duration};
 use crate::command::MyCommand;
 use crate::host::Config;
 use crate::nix_path;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Result, Context};
 use clap::Parser;
 use itertools::Itertools;
 use tokio::{task::LocalSet, time::sleep};
@@ -292,13 +292,14 @@ impl BuildSystems {
 		let action = Action::from(self.subcommand.clone());
 		let drv = config
 			.fleet_field
-			.select(nix_path!(.buildSystems.{action.build_attr()}.{&host}))
-			.await?;
+			.select(nix_path!(.buildSystems((serde_json::json!({
+				"localSystem": config.local_system.clone(),
+			}))).{action.build_attr()}.{&host}))
+			.await.context("system attribute")?;
 		let outputs = drv.build().await.map_err(|e| {
 			if action.build_attr() == "sdImage" {
 				info!("sd-image build failed");
 				info!("Make sure you have imported modulesPath/installer/sd-card/sd-image-<arch>[-installer].nix (For installer, you may want to check config)");
-				info!("This module was automatically imported before, but was removed for better customization")
 			}
 			e
 		})?;
@@ -311,6 +312,10 @@ impl BuildSystems {
 				if !config.is_local(&host) {
 					info!("uploading system closure");
 					{
+						// Alternatively, nix store make-content-addressed can be used,
+						// at least for the first deployment, to provide trusted store key.
+						//
+						// It is much slower, yet doesn't require root on the deployer machine.
 						let mut sign = MyCommand::new("nix");
 						// Private key for host machine is registered in nix-sign.nix
 						sign.arg("store")

@@ -16,7 +16,7 @@ use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::codec::{FramedRead, LinesCodec};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, warn, Level};
 
 use crate::command::{ClonableHandler, Handler, NixHandler, NoopHandler};
 
@@ -247,6 +247,10 @@ impl NixSessionInner {
 		Ok(())
 	}
 	async fn send_command(&mut self, cmd: impl AsRef<[u8]>) -> Result<()> {
+		if tracing::enabled!(Level::DEBUG) {
+			let cmd_str = String::from_utf8_lossy(cmd.as_ref());
+			tracing::debug!("{cmd_str}");
+		};
 		self.stdin.write_all(cmd.as_ref()).await?;
 		self.stdin.write_all(b"\n").await?;
 		Ok(())
@@ -420,7 +424,7 @@ impl Index {
 	}
 	pub fn apply(v: impl Serialize) -> Self {
 		let serialized = nixlike::serialize(v).expect("invalid value for apply");
-		Self::Apply(serialized)
+		Self::Apply(serialized.trim_end().to_owned())
 	}
 }
 impl Display for Index {
@@ -434,8 +438,7 @@ impl Display for Index {
 				write!(f, ".{v}")
 			}
 			Index::Apply(o) => {
-				let v = nixlike::serialize(o).map_err(|_| fmt::Error)?;
-				write!(f, "<apply>({v})")
+				write!(f, "<apply>({o})")
 			}
 			Index::Idx(i) => {
 				write!(f, "[{i}]")
@@ -451,7 +454,6 @@ impl fmt::Debug for Index {
 struct PathDisplay<'i>(&'i [Index]);
 impl Display for PathDisplay<'_> {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "flake")?;
 		for i in self.0 {
 			write!(f, "{i}")?;
 		}
@@ -508,8 +510,8 @@ impl Field {
 					query.push_str(escaped.trim());
 				}
 				Index::Apply(a) => {
-					query.push(' ');
-					query.push_str(&a);
+					// In cases like `a {}.b` first `{}.b` will be evaluated, so `a {}` should be encased in `()`
+					query = format!("({query} {a})");
 				}
 				Index::Idx(idx) => {
 					query = format!("builtins.elemAt ({query}) {idx}");
@@ -560,7 +562,7 @@ impl Field {
 			.await
 			.execute_expression_raw(&format!(":b sess_field_{id}"), &mut NixHandler::default())
 			.await?;
-		ensure!(!vid.is_empty(), "build failed");
+		ensure!(!vid.is_empty(), "build failed: {}", PathDisplay(&self.full_path));
 		let Some(vid) = vid.strip_prefix("This derivation produced the following outputs:\n")
 		else {
 			panic!("unexpected build output: {vid:?}");

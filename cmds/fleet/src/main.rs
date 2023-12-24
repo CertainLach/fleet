@@ -24,7 +24,7 @@ use futures::TryStreamExt;
 use host::{Config, FleetOpts};
 use human_repr::HumanCount;
 use indicatif::{ProgressState, ProgressStyle};
-use tracing::{info, metadata::LevelFilter};
+use tracing::info;
 use tracing::{info_span, Instrument};
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -99,27 +99,6 @@ async fn run_command(config: &Config, command: Opts) -> Result<()> {
 	Ok(())
 }
 
-// fn main() -> Result<()> {
-// 	let pool = r2d2::Builder::<NixSessionPool>::new()
-// 		.min_idle(Some(1))
-// 		.max_lifetime(Some(Duration::from_secs(10)))
-// 		.build(NixSessionPool {
-// 			flake: ".".to_owned(),
-// 			nix_args: vec![],
-// 		})?;
-// 	let conn = pool.get()?;
-// 	let field = Field::root(conn);
-// 	// let builtins = field.get_field("builtins")?;
-// 	let cur_sys: String = field.get_field("builtins")?.as_json()?;
-// 	eprintln!("current system = {cur_sys}");
-// 	let v = field.get_field("fleetConfigurations")?;
-// 	eprintln!("configs = {:?}", v.list_fields()?);
-// 	let d = v.get_field("default")?;
-// 	dbg!(d.list_fields());
-// 	Ok(())
-// }
-//
-
 fn setup_logging() {
 	let indicatif_layer = IndicatifLayer::new().with_progress_style(
 		ProgressStyle::with_template(
@@ -157,7 +136,7 @@ fn setup_logging() {
 		),
 	);
 
-	let filter = EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into());
+	let filter = EnvFilter::from_default_env();
 
 	tracing_subscriber::registry()
 		.with(

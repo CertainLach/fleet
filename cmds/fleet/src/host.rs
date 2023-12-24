@@ -13,7 +13,7 @@ use openssh::SessionBuilder;
 use tempfile::NamedTempFile;
 
 use crate::{
-	better_nix_eval::{Field, Index, NixSessionPool},
+	better_nix_eval::{Field, NixSessionPool},
 	command::MyCommand,
 	fleetdata::{FleetData, FleetSecret, FleetSharedSecret},
 	nix_path,
@@ -250,7 +250,6 @@ pub struct FleetOpts {
 	#[clap(long)]
 	pub localhost: Option<String>,
 
-	// TODO: unhardcode x86_64-linux
 	/// Override detected system for host, to perform builds via
 	/// binfmt-declared qemu instead of trying to crosscompile
 	#[clap(long, default_value = "detect")]
@@ -280,7 +279,7 @@ impl FleetOpts {
 		let fleet_root = Field::field(root_field, "fleetConfigurations").await?;
 
 		let fleet_field = fleet_root
-			.select(nix_path!(.default.{&local_system}))
+			.select(nix_path!(.default))
 			.await?;
 		let config_field = fleet_field
 			.select(nix_path!(.configUnchecked))
