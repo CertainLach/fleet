@@ -1,8 +1,10 @@
+use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use std::{env::current_dir, time::Duration};
 
 use crate::command::MyCommand;
 use crate::host::Config;
+use crate::nix_path;
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use itertools::Itertools;
@@ -11,15 +13,9 @@ use tracing::{error, field, info, info_span, warn, Instrument};
 
 #[derive(Parser, Clone)]
 pub struct BuildSystems {
-	/// Do not continue on error
-	#[clap(long)]
-	fail_fast: bool,
 	/// Disable automatic rollback
 	#[clap(long)]
 	disable_rollback: bool,
-	/// Run builds as sudo
-	#[clap(long)]
-	privileged_build: bool,
 	#[clap(subcommand)]
 	subcommand: Subcommand,
 }
@@ -294,34 +290,11 @@ impl BuildSystems {
 	async fn build_task(self, config: Config, host: String) -> Result<()> {
 		info!("building");
 		let action = Action::from(self.subcommand.clone());
-		let built = {
-			let dir = tempfile::tempdir()?;
-			dir.path().to_owned()
-		};
-
-		let mut nix_build = MyCommand::new("nix");
-		nix_build
-			.args([
-				"build",
-				"--impure",
-				"--json",
-				// "--show-trace",
-				"--no-link",
-			])
-			.comparg("--out-link", &built)
-			.arg(
-				config.configuration_attr_name(&format!(
-					"buildSystems.{}.{host}",
-					action.build_attr()
-				)),
-			)
-			.args(&config.nix_args);
-
-		if self.privileged_build {
-			nix_build = nix_build.sudo();
-		}
-
-		nix_build.run_nix().await.map_err(|e| {
+		let drv = config
+			.fleet_field
+			.select(nix_path!(.buildSystems.{action.build_attr()}.{&host}))
+			.await?;
+		let outputs = drv.build().await.map_err(|e| {
 			if action.build_attr() == "sdImage" {
 				info!("sd-image build failed");
 				info!("Make sure you have imported modulesPath/installer/sd-card/sd-image-<arch>[-installer].nix (For installer, you may want to check config)");
@@ -329,7 +302,9 @@ impl BuildSystems {
 			}
 			e
 		})?;
-		let built = std::fs::canonicalize(built)?;
+		let out_output = outputs
+			.get("out")
+			.ok_or_else(|| anyhow!("system build should produce \"out\" output"))?;
 
 		match action {
 			Action::Upload { action } => {
@@ -342,7 +317,7 @@ impl BuildSystems {
 							.arg("sign")
 							.comparg("--key-file", "/etc/nix/private-key")
 							.arg("-r")
-							.arg(&built);
+							.arg(out_output);
 						if let Err(e) = sign.sudo().run_nix().await {
 							warn!("Failed to sign store paths: {e}");
 						};
@@ -353,7 +328,7 @@ impl BuildSystems {
 						nix.arg("copy")
 							.arg("--substitute-on-destination")
 							.comparg("--to", format!("ssh-ng://{host}"))
-							.arg(&built);
+							.arg(out_output);
 						match nix.run_nix().await {
 							Ok(()) => break,
 							Err(e) if tries < 3 => {
@@ -366,53 +341,22 @@ impl BuildSystems {
 					}
 				}
 				if let Some(action) = action {
-					execute_upload(&self, &config, action, &host, built).await?
+					execute_upload(&self, &config, action, &host, out_output.clone()).await?
 				}
 			}
 			Action::Package(PackageAction::SdImage) => {
 				let mut out = current_dir()?;
 				out.push(format!("sd-image-{}", host));
 
-				info!("building sd image to {:?}", out);
-				let mut nix_build = MyCommand::new("nix");
-				nix_build
-					.args(["build", "--impure", "--no-link"])
-					.comparg("--out-link", &out)
-					.arg(config.configuration_attr_name(&format!("buildSystems.sdImage.{}", host,)))
-					.args(&config.nix_args);
-				if !self.fail_fast {
-					nix_build.arg("--keep-going");
-				}
-				if self.privileged_build {
-					nix_build = nix_build.sudo();
-				}
-
-				nix_build.run_nix().await?;
+				info!("linking sd image to {:?}", out);
+				symlink(out_output, out)?;
 			}
 			Action::Package(PackageAction::InstallationCd) => {
 				let mut out = current_dir()?;
 				out.push(format!("installation-cd-{}", host));
 
-				info!("building sd image to {:?}", out);
-				let mut nix_build = MyCommand::new("nix");
-				nix_build
-					.args(["build", "--impure", "--no-link"])
-					.comparg("--out-link", &out)
-					.arg(
-						config.configuration_attr_name(&format!(
-							"buildSystems.installationCd.{}",
-							host,
-						)),
-					)
-					.args(&config.nix_args);
-				if !self.fail_fast {
-					nix_build.arg("--keep-going");
-				}
-				if self.privileged_build {
-					nix_build = nix_build.sudo();
-				}
-
-				nix_build.run_nix().await?;
+				info!("linking iso image to {:?}", out);
+				symlink(out_output, out)?;
 			}
 		};
 		Ok(())

@@ -1,5 +1,4 @@
 use std::{
-	borrow::Cow,
 	collections::HashMap,
 	ffi::OsStr,
 	process::Stdio,
@@ -247,10 +246,14 @@ impl Handler for NoopHandler {
 pub struct NixHandler {
 	spans: HashMap<u64, Span>,
 }
-fn process_message(m: &str) -> Cow<'_, str> {
+fn process_message(m: &str) -> String {
 	static OSC_CLEANER: Lazy<Regex> =
 		Lazy::new(|| Regex::new(r"\x1B\]([^\x07\x1C]*[\x07\x1C])?|\r").unwrap());
-	OSC_CLEANER.replace_all(m, "")
+	static DETABBER: Lazy<Regex> = Lazy::new(|| Regex::new(r"\t").unwrap());
+	let m = OSC_CLEANER.replace_all(m, "");
+	// Indicatif can't format tabs. This is not the correct tab formatting, as correct one should be aligned,
+	// and not just be replaced with the constant number of spaces, but it's ok for now, as statuses are single-line.
+	DETABBER.replace_all(m.as_ref(), "  ").to_string()
 }
 impl Handler for NixHandler {
 	fn handle_line(&mut self, e: &str) {

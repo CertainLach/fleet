@@ -1,6 +1,6 @@
 use crate::{
 	fleetdata::{FleetSecret, FleetSharedSecret},
-	host::Config,
+	host::Config, nix_path,
 };
 use anyhow::{bail, ensure, Context, Result};
 use chrono::Utc;
@@ -339,7 +339,7 @@ impl Secrets {
 					let mut data = config.shared_secret(name)?;
 					let expected_owners: Vec<String> = config
 						.config_field
-						.get_json_deep(["sharedSecrets", name, "expectedOwners"])
+						.get_json_deep(nix_path!(sharedSecrets.{name}.expectedOwners))
 						.await?;
 					if expected_owners.is_empty() {
 						warn!("secret was removed from fleet config: {name}, removing from data");
@@ -352,7 +352,7 @@ impl Secrets {
 					if set != expected_set {
 						let owner_dependent: bool = config
 							.config_field
-							.get_json_deep(["sharedSecrets", name, "ownerDependent"])
+							.get_json_deep(nix_path!(.sharedSecrets.{name}.ownerDependent))
 							.await?;
 						if !owner_dependent {
 							warn!("reencrypting secret '{name}' for new owner set");

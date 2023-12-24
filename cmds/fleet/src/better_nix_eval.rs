@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
-use std::fmt::Display;
+use std::fmt::{self, Display};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
 
@@ -8,7 +10,7 @@ use futures::StreamExt;
 use itertools::Itertools;
 use r2d2::{Pool, PooledConnection};
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::select;
@@ -72,14 +74,20 @@ impl<H> ErrorCollector<'_, H> {
 		// 	s.split('\n').filter(|s| !s.trim().is_empty()).map(|v| v.)
 		// }
 		if !self.collected.is_empty() {
-			bail!("{}", self.collected.iter().map(|v| {
-				if let Some(f) = v.strip_prefix("\u{1b}[31;1merror:\u{1b}[0m ") {
-					let v = unindent::unindent(f.trim_start());
-					v.trim().to_owned()
-				} else {
-					v.to_owned()
-				}
-			}).join("\n"));
+			bail!(
+				"{}",
+				self.collected
+					.iter()
+					.map(|v| {
+						if let Some(f) = v.strip_prefix("\u{1b}[31;1merror:\u{1b}[0m ") {
+							let v = unindent::unindent(f.trim_start());
+							v.trim().to_owned()
+						} else {
+							v.to_owned()
+						}
+					})
+					.join("\n")
+			);
 		}
 		Ok(())
 	}
@@ -150,6 +158,13 @@ impl OutputHandler {
 	}
 }
 
+struct WarnHandler;
+impl Handler for WarnHandler {
+	fn handle_line(&mut self, e: &str) {
+		warn!(target: "nix", "{e}")
+	}
+}
+
 impl NixSessionInner {
 	async fn new(flake: &OsStr, extra_args: impl IntoIterator<Item = &OsStr>) -> Result<Self> {
 		let mut cmd = Command::new("nix");
@@ -174,12 +189,13 @@ impl NixSessionInner {
 		stdin.flush().await?;
 		let nix_handler = NixHandler::default();
 		let mut full_delimiter = None;
+		let mut errors = vec![];
 		while let Some(line) = out.next().await {
 			let line = match line {
 				OutputLine::Out(o) => o,
 				OutputLine::Err(_e) => {
 					// Handle startup errors, but skip repl hello?
-					//nix_handler.handle_line(&e);
+					errors.push(_e);
 					continue;
 				}
 			};
@@ -190,6 +206,9 @@ impl NixSessionInner {
 			}
 		}
 		let Some(full_delimiter) = full_delimiter else {
+			for e in errors {
+				error!("{e}");
+			}
 			bail!("failed to discover delimiter");
 		};
 		let mut res = Self {
@@ -342,19 +361,91 @@ impl NixSessionInner {
 #[derive(Clone)]
 pub struct NixSession(Arc<tokio::sync::Mutex<PooledConnection<NixSessionPoolInner>>>);
 
+#[macro_export]
+macro_rules! nix_path {
+	(@o($o:ident) $var:ident $($tt:tt)*) => {{
+		$o.push(Index::var(stringify!($var)));
+		nix_path!(@o($o) $($tt)*);
+	}};
+	(@o($o:ident) . $var:ident $($tt:tt)*) => {{
+		$o.push(Index::attr(stringify!($var)));
+		nix_path!(@o($o) $($tt)*);
+	}};
+	(@o($o:ident) . $var:literal $($tt:tt)*) => {{
+		$o.push(Index::attr($var));
+		nix_path!(@o($o) $($tt)*);
+	}};
+	(@o($o:ident) . { $var:expr } $($tt:tt)*) => {{
+		$o.push(Index::attr($var));
+		nix_path!(@o($o) $($tt)*);
+	}};
+	(@o($o:ident) [ $var:literal ] $($tt:tt)*) => {{
+		$o.push(Index::idx($var));
+		nix_path!(@o($o) $($tt)*);
+	}};
+	(@o($o:ident) ($e:expr) $($tt:tt)*) => {
+		$o.push(Index::apply($e));
+		nix_path!(@o($o) $($tt)*);
+	};
+	(@o($o:ident)) => {};
+	($($tt:tt)+) => {{
+		use $crate::{nix_path, better_nix_eval::Index};
+		let mut out = vec![];
+		nix_path!(@o(out) $($tt)*);
+		out
+	}}
+}
+
 #[derive(Clone)]
-enum Index {
+pub enum Index {
+	Var(String),
 	String(String),
-	// Idx(u32),
+	Apply(String),
+	Idx(u32),
+}
+impl Index {
+	pub fn var(v: impl AsRef<str>) -> Self {
+		let v = v.as_ref();
+		assert!(
+			!(v.contains('.') | v.contains(' ')),
+			"bad variable name: {v}"
+		);
+		Self::Var(v.to_owned())
+	}
+	pub fn attr(v: impl AsRef<str>) -> Self {
+		Self::String(v.as_ref().to_owned())
+	}
+	pub fn idx(v: u32) -> Self {
+		Self::Idx(v)
+	}
+	pub fn apply(v: impl Serialize) -> Self {
+		let serialized = nixlike::serialize(v).expect("invalid value for apply");
+		Self::Apply(serialized)
+	}
 }
 impl Display for Index {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
+			Index::Var(v) => {
+				write!(f, "{v}")
+			}
 			Index::String(k) => {
 				let v = nixlike::format_identifier(k.as_str());
 				write!(f, ".{v}")
 			}
+			Index::Apply(o) => {
+				let v = nixlike::serialize(o).map_err(|_| fmt::Error)?;
+				write!(f, "<apply>({v})")
+			}
+			Index::Idx(i) => {
+				write!(f, "[{i}]")
+			}
 		}
+	}
+}
+impl fmt::Debug for Index {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "{self}")
 	}
 }
 struct PathDisplay<'i>(&'i [Index]);
@@ -381,43 +472,49 @@ impl Field {
 		}
 	}
 	pub async fn field(session: NixSession, field: &str) -> Result<Self> {
-		Self::root(session).get_field_deep([field]).await
+		Self::root(session)
+			.select([Index::var(field)])
+			.await
 	}
 	pub async fn get_json_deep<'a, V: DeserializeOwned>(
 		&self,
-		name: impl IntoIterator<Item = &'a str>,
+		name: impl IntoIterator<Item = Index>,
 	) -> Result<V> {
-		let field = self.get_field_deep(name).await?;
+		let field = self.select(name).await?;
 		field.as_json().await
 	}
-	pub async fn get_field(&self, name: &str) -> Result<Self> {
-		self.get_field_deep([name]).await
-	}
-	pub async fn get_field_deep<'a>(
-		&self,
-		name: impl IntoIterator<Item = &'a str>,
-	) -> Result<Self> {
-		let mut iter = name.into_iter();
+	pub async fn select<'a>(&self, name: impl IntoIterator<Item = Index>) -> Result<Self> {
+		let mut name = name.into_iter();
 
 		let mut full_path = self.full_path.clone();
 		let mut query = if let Some(id) = self.value {
 			format!("sess_field_{id}")
 		} else {
-			let first = iter.next().expect("name not empty");
-			ensure!(
-				!(first.contains('.') | first.contains(' ')),
-				"bad name for root query: {first}"
-			);
-			full_path.push(Index::String(first.to_string()));
-			first.to_string()
+			let first = name.next();
+			if let Some(Index::Var(i)) = first {
+				full_path.push(Index::Var(i.clone()));
+				i.clone()
+			} else {
+				panic!("first path item should be variable, got {first:?}")
+			}
 		};
-		for v in iter {
-			full_path.push(Index::String(v.to_string()));
-			// Escape
-			let escaped = nixlike::serialize(v)?;
-			let escaped = escaped.trim();
-			query.push('.');
-			query.push_str(escaped);
+		for v in name {
+			full_path.push(v.clone());
+			match v {
+				Index::Var(_) => panic!("var item may only be first"),
+				Index::String(s) => {
+					let escaped = nixlike::serialize(s)?;
+					query.push('.');
+					query.push_str(escaped.trim());
+				}
+				Index::Apply(a) => {
+					query.push(' ');
+					query.push_str(&a);
+				}
+				Index::Idx(idx) => {
+					query = format!("builtins.elemAt ({query}) {idx}");
+				}
+			}
 		}
 
 		let vid = self
@@ -453,6 +550,28 @@ impl Field {
 			.execute_expression_to_json(&format!("builtins.attrNames sess_field_{id}"))
 			.await
 			.with_context(|| format!("full path: {}", PathDisplay(&self.full_path)))
+	}
+	pub async fn build(&self) -> Result<HashMap<String, PathBuf>> {
+		let id = self.value.expect("can't use build on not-value");
+		let vid = self
+			.session
+			.0
+			.lock()
+			.await
+			.execute_expression_raw(&format!(":b sess_field_{id}"), &mut NixHandler::default())
+			.await?;
+		ensure!(!vid.is_empty(), "build failed");
+		let Some(vid) = vid.strip_prefix("This derivation produced the following outputs:\n")
+		else {
+			panic!("unexpected build output: {vid:?}");
+		};
+		let outputs = vid
+			.split('\n')
+			.filter(|v| !v.is_empty())
+			.map(|v| v.split_once(" -> ").expect("unexpected build output"))
+			.map(|(a, b)| (a.trim_start().to_owned(), PathBuf::from(b)))
+			.collect();
+		Ok(outputs)
 	}
 }
 impl Drop for Field {

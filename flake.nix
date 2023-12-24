@@ -19,6 +19,7 @@
       rustPlatform = pkgs.makeRustPlatform { cargo = rust; rustc = rust; };
     in
     {
+		packages = (import ./pkgs) pkgs pkgs;
       devShell = (pkgs.mkShell.override { stdenv = llvmPkgs.stdenv; }) {
         nativeBuildInputs = with pkgs; [
           rust

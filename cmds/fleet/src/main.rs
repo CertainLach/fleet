@@ -1,3 +1,4 @@
+#![recursion_limit = "512"]
 #![feature(try_blocks)]
 
 pub(crate) mod cmds;

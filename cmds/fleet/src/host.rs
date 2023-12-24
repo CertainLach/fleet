@@ -13,9 +13,10 @@ use openssh::SessionBuilder;
 use tempfile::NamedTempFile;
 
 use crate::{
-	better_nix_eval::{Field, NixSessionPool},
+	better_nix_eval::{Field, Index, NixSessionPool},
 	command::MyCommand,
 	fleetdata::{FleetData, FleetSecret, FleetSharedSecret},
+	nix_path,
 };
 
 pub struct FleetConfigInternals {
@@ -24,9 +25,9 @@ pub struct FleetConfigInternals {
 	pub opts: FleetOpts,
 	pub data: Mutex<FleetData>,
 	pub nix_args: Vec<OsString>,
-	// fleetConfigurations.<name>
+	/// fleetConfigurations.<name>.<localSystem>
 	pub fleet_field: Field,
-	// fleet_config.configUnchecked
+	/// fleet_config.configUnchecked
 	pub config_field: Field,
 }
 
@@ -93,20 +94,10 @@ impl Config {
 		command.run_string().await
 	}
 
-	pub fn configuration_attr_name(&self, name: &str) -> OsString {
-		let mut str = self.directory.as_os_str().to_owned();
-		str.push("#");
-		str.push(&format!(
-			"fleetConfigurations.default.{}.{}",
-			self.local_system, name
-		));
-		str
-	}
-
 	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
 		let names = self
 			.fleet_field
-			.get_field_deep(["configuredHosts"])
+			.select(nix_path!(.configuredHosts))
 			.await?
 			.list_fields()
 			.await?;
@@ -118,7 +109,7 @@ impl Config {
 	}
 	pub async fn system_config(&self, host: &str) -> Result<Field> {
 		self.fleet_field
-			.get_field_deep(["configuredSystems", host, "config"])
+			.select(nix_path!(.configuredSystems.{host}.config))
 			.await
 	}
 
@@ -131,7 +122,7 @@ impl Config {
 	/// Shared secrets configured in fleet.nix or in flake
 	pub async fn list_configured_shared(&self) -> Result<Vec<String>> {
 		self.config_field
-			.get_field("sharedSecrets")
+			.select(nix_path!(.sharedSecrets))
 			.await?
 			.list_fields()
 			.await
@@ -221,7 +212,7 @@ impl Config {
 	}
 	pub async fn shared_secret_expected_owners(&self, secret: &str) -> Result<Vec<String>> {
 		self.config_field
-			.get_field_deep(["sharedSecrets", secret, "expectedOwners"])
+			.select(nix_path!(.sharedSecrets.{secret}.expectedOwners))
 			.await?
 			.as_json()
 			.await
@@ -279,7 +270,9 @@ impl FleetOpts {
 
 		if self.local_system == "detect" {
 			let builtins_field = Field::field(root_field.clone(), "builtins").await?;
-			let system = builtins_field.get_field("currentSystem").await?;
+			let system = builtins_field
+				.select(nix_path!(.currentSystem))
+				.await?;
 			self.local_system = system.as_json().await?;
 		}
 		let local_system = self.local_system.clone();
@@ -287,9 +280,11 @@ impl FleetOpts {
 		let fleet_root = Field::field(root_field, "fleetConfigurations").await?;
 
 		let fleet_field = fleet_root
-			.get_field_deep(["default", &local_system])
+			.select(nix_path!(.default.{&local_system}))
 			.await?;
-		let config_field = fleet_field.get_field("configUnchecked").await?;
+		let config_field = fleet_field
+			.select(nix_path!(.configUnchecked))
+			.await?;
 
 		let mut fleet_data_path = directory.clone();
 		fleet_data_path.push("fleet.nix");

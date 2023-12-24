@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::host::Config;
+use crate::nix_path;
 use anyhow::{ensure, Result};
 use clap::Parser;
 
@@ -38,7 +39,7 @@ impl Info {
 					if !tagged.is_empty() {
 						let tags: Vec<String> = config
 							.fleet_field
-							.get_field_deep(["configuredSystems", &host.name, "config", "tags"])
+							.select(nix_path!(.configuredSystems.{&host.name}.config.tags))
 							.await?
 							.as_json()
 							.await?;
@@ -64,7 +65,7 @@ impl Info {
 				let host = config.system_config(&host).await?;
 				if external {
 					out.extend(
-						host.get_field_deep(["network", "externalIps"])
+						host.select(nix_path!(.network.externalIps))
 							.await?
 							.as_json::<Vec<String>>()
 							.await?,
@@ -72,7 +73,7 @@ impl Info {
 				}
 				if internal {
 					out.extend(
-						host.get_field_deep(["network", "internalIps"])
+						host.select(nix_path!(.network.internalIps))
 							.await?
 							.as_json::<Vec<String>>()
 							.await?,
