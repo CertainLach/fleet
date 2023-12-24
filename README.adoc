@@ -1,6 +1,10 @@
-= fleet
+= Fleet
 
-Early prototype stage, yet it is used in production
+++++
+<p align="center"><a href="https://github.com/CertainLach/fleet"><img alt="fleet temporary logo generated with midjourney" src="./docs/tmplogo.png" width="200px"></img></a></p>
+++++
+
+An NixOS cluster deployment tool.
 
 == Advantages over existing configuration systems (NixOps/Morph)
 
