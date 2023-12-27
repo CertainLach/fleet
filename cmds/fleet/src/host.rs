@@ -16,7 +16,7 @@ use crate::{
 	better_nix_eval::{Field, NixSessionPool},
 	command::MyCommand,
 	fleetdata::{FleetData, FleetSecret, FleetSharedSecret},
-	nix_path,
+	nix_go, nix_go_json,
 };
 
 pub struct FleetConfigInternals {
@@ -29,6 +29,8 @@ pub struct FleetConfigInternals {
 	pub fleet_field: Field,
 	/// fleet_config.configUnchecked
 	pub config_field: Field,
+	/// fleet_config.unchecked
+	pub config_unchecked_field: Field,
 }
 
 #[derive(Clone)]
@@ -95,12 +97,8 @@ impl Config {
 	}
 
 	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
-		let names = self
-			.fleet_field
-			.select(nix_path!(.configuredHosts))
-			.await?
-			.list_fields()
-			.await?;
+		let fleet_field = &self.fleet_field;
+		let names = nix_go!(fleet_field.configuredHosts).list_fields().await?;
 		let mut out = vec![];
 		for name in names {
 			out.push(ConfigHost { name })
@@ -108,9 +106,8 @@ impl Config {
 		Ok(out)
 	}
 	pub async fn system_config(&self, host: &str) -> Result<Field> {
-		self.fleet_field
-			.select(nix_path!(.configuredSystems.{host}.config))
-			.await
+		let fleet_field = &self.fleet_field;
+		Ok(nix_go!(fleet_field.configuredSystems[{ host }].config))
 	}
 
 	pub(super) fn data(&self) -> MutexGuard<FleetData> {
@@ -121,11 +118,8 @@ impl Config {
 	}
 	/// Shared secrets configured in fleet.nix or in flake
 	pub async fn list_configured_shared(&self) -> Result<Vec<String>> {
-		self.config_field
-			.select(nix_path!(.sharedSecrets))
-			.await?
-			.list_fields()
-			.await
+		let config_field = &self.config_field;
+		nix_go!(config_field.sharedSecrets).list_fields().await
 	}
 	/// Shared secrets configured in fleet.nix
 	pub fn list_shared(&self) -> Vec<String> {
@@ -211,11 +205,10 @@ impl Config {
 		Ok(secret.clone())
 	}
 	pub async fn shared_secret_expected_owners(&self, secret: &str) -> Result<Vec<String>> {
-		self.config_field
-			.select(nix_path!(.sharedSecrets.{secret}.expectedOwners))
-			.await?
-			.as_json()
-			.await
+		let config_field = &self.config_field;
+		Ok(nix_go_json!(
+			config_field.sharedSecrets[{ secret }].expectedOwners
+		))
 	}
 
 	pub fn save(&self) -> Result<()> {
@@ -269,21 +262,15 @@ impl FleetOpts {
 
 		if self.local_system == "detect" {
 			let builtins_field = Field::field(root_field.clone(), "builtins").await?;
-			let system = builtins_field
-				.select(nix_path!(.currentSystem))
-				.await?;
-			self.local_system = system.as_json().await?;
+			self.local_system = nix_go_json!(builtins_field.currentSystem);
 		}
 		let local_system = self.local_system.clone();
 
 		let fleet_root = Field::field(root_field, "fleetConfigurations").await?;
 
-		let fleet_field = fleet_root
-			.select(nix_path!(.default))
-			.await?;
-		let config_field = fleet_field
-			.select(nix_path!(.configUnchecked))
-			.await?;
+		let fleet_field = nix_go!(fleet_root.default);
+		let config_field = nix_go!(fleet_field.configUnchecked);
+		let config_unchecked_field = nix_go!(fleet_field.unchecked);
 
 		let mut fleet_data_path = directory.clone();
 		fleet_data_path.push("fleet.nix");
@@ -298,6 +285,7 @@ impl FleetOpts {
 			nix_args,
 			fleet_field,
 			config_field,
+			config_unchecked_field,
 		})))
 	}
 }

@@ -15,6 +15,9 @@ let
         type = bool;
         description = "Is this secret owner-dependent, and needs to be regenerated on ownership set change, or it may be just reencrypted";
       };
+      generateImpure = mkOption {
+        type = unspecified;
+      };
       generator = mkOption {
         type = nullOr (submodule {
           packages = mkOption {

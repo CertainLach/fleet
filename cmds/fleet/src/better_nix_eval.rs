@@ -365,39 +365,167 @@ impl NixSessionInner {
 #[derive(Clone)]
 pub struct NixSession(Arc<tokio::sync::Mutex<PooledConnection<NixSessionPoolInner>>>);
 
+#[derive(Clone)]
+pub struct NixExprBuilder {
+	out: String,
+	used_fields: Vec<Field>,
+}
+impl NixExprBuilder {
+	pub fn object() -> Self {
+		NixExprBuilder {
+			out: "{ ".to_owned(),
+			used_fields: Vec::new(),
+		}
+	}
+	pub fn string(s: &str) -> Self {
+		NixExprBuilder {
+			out: nixlike::serialize(s)
+				.expect("no problems with serializing_string")
+				.trim_end()
+				.to_owned(),
+			used_fields: Vec::new(),
+		}
+	}
+	pub fn serialized(v: impl Serialize) -> Self {
+		let serialized = nixlike::serialize(v).expect("invalid value for apply");
+		Self {
+			out: serialized.trim_end().to_owned(),
+			used_fields: Vec::new(),
+		}
+	}
+	pub fn field(f: Field) -> Self {
+		Self {
+			out: format!("sess_field_{}", f.0.value.expect("no value")),
+			used_fields: vec![f],
+		}
+	}
+	pub fn end_obj(&mut self) {
+		self.out.push('}');
+	}
+	pub fn obj_key(&mut self, name: Self, value: Self) {
+		self.out.push_str(r#""${"#);
+		self.extend(name);
+		self.out.push_str(r#"}" = "#);
+		self.extend(value);
+		self.out.push_str("; ");
+	}
+
+	pub fn extend(&mut self, e: Self) {
+		self.out.push_str(&e.out);
+		self.used_fields.extend(e.used_fields);
+	}
+
+	pub fn session(&self) -> NixSession {
+		let mut session = None;
+		for ele in &self.used_fields {
+			if session.is_none() {
+				session = Some(ele.0.session.clone());
+				continue;
+			}
+			let session = &session.as_ref().expect("checked").0;
+			let ele_sess = &ele.0.session.0;
+			assert!(
+				Arc::ptr_eq(session, ele_sess),
+				"can't mix fields from different session"
+			);
+		}
+		session.expect("expr without fields used")
+	}
+	pub fn index_attr(&mut self, s: &str) {
+		let escaped = nixlike::serialize(s).expect("string");
+		self.out.push('.');
+		self.out.push_str(escaped.trim_end());
+	}
+}
+
 #[macro_export]
-macro_rules! nix_path {
-	(@o($o:ident) $var:ident $($tt:tt)*) => {{
-		$o.push(Index::var(stringify!($var)));
-		nix_path!(@o($o) $($tt)*);
+macro_rules! nix_expr_inner {
+	(Obj { $($ident:ident: $($val:tt)+),* $(,)? }) => {{
+		use $crate::better_nix_eval::NixExprBuilder;
+		let mut out = NixExprBuilder::object();
+		$(
+			out.obj_key(
+				NixExprBuilder::string(stringify!($ident)),
+				$crate::nix_expr_inner!($($val)+),
+			);
+		)*
+		out.end_obj();
+		out
 	}};
+	(@field($o:ident) . $var:ident $($tt:tt)*) => {{
+		$o.index_attr(stringify!($var));
+		nix_expr_inner!(@field($o) $($tt)*);
+	}};
+	(@field($o:ident) [{ $v:expr }] $($tt:tt)*) => {{
+		$o.push(Index::attr(&$v));
+		nix_expr_inner!(@o($o) $($tt)*);
+	}};
+	(@field($o:ident) [ $($var:tt)+ ] $($tt:tt)*) => {{
+		$o.push(Index::Expr($crate::nix_expr_inner!($($var)+)));
+		nix_expr_inner!(@o($o) $($tt)*);
+	}};
+	(@field($o:ident) ($($var:tt)*) $($tt:tt)*) => {
+		$o.push(Index::ExprApply($crate::nix_expr_inner!($($var)+)));
+		nix_expr_inner!(@o($o) $($tt)*);
+	};
+	(@field($o:ident)) => {};
+	($field:ident $($tt:tt)*) => {{
+		use $crate::{better_nix_eval::NixExprBuilder, nix_expr_inner};
+		#[allow(unused_mut, reason = "might be used if indexed")]
+		let mut out = NixExprBuilder::field($field);
+		nix_expr_inner!(@field(out) $($tt)*);
+		out
+	}};
+	($v:literal) => {{
+		use $crate::better_nix_eval::NixExprBuilder;
+		NixExprBuilder::string($v)
+	}};
+	({$v:expr}) => {{
+		use $crate::better_nix_eval::NixExprBuilder;
+		NixExprBuilder::serialized(&$v)
+	}}
+}
+#[macro_export]
+macro_rules! nix_expr {
+	($($tt:tt)+) => {{
+		use $crate::{better_nix_eval::{NixExprBuilder, Field}, nix_expr_inner};
+		let expr = nix_expr_inner!($($tt)+);
+		Field::new(expr.session(), expr.out)
+	}};
+}
+
+#[macro_export]
+macro_rules! nix_go {
 	(@o($o:ident) . $var:ident $($tt:tt)*) => {{
 		$o.push(Index::attr(stringify!($var)));
-		nix_path!(@o($o) $($tt)*);
+		nix_go!(@o($o) $($tt)*);
 	}};
-	(@o($o:ident) . $var:literal $($tt:tt)*) => {{
-		$o.push(Index::attr($var));
-		nix_path!(@o($o) $($tt)*);
+	(@o($o:ident) [{ $v:expr }] $($tt:tt)*) => {{
+		$o.push(Index::attr(&$v));
+		nix_go!(@o($o) $($tt)*);
 	}};
-	(@o($o:ident) . { $var:expr } $($tt:tt)*) => {{
-		$o.push(Index::attr($var));
-		nix_path!(@o($o) $($tt)*);
+	(@o($o:ident) [ $($var:tt)+ ] $($tt:tt)*) => {{
+		$o.push(Index::Expr($crate::nix_expr_inner!($($var)+)));
+		nix_go!(@o($o) $($tt)*);
 	}};
-	(@o($o:ident) [ $var:literal ] $($tt:tt)*) => {{
-		$o.push(Index::idx($var));
-		nix_path!(@o($o) $($tt)*);
-	}};
-	(@o($o:ident) ($e:expr) $($tt:tt)*) => {
-		$o.push(Index::apply($e));
-		nix_path!(@o($o) $($tt)*);
+	(@o($o:ident) ($($var:tt)*) $($tt:tt)*) => {
+		$o.push(Index::ExprApply($crate::nix_expr_inner!($($var)+)));
+		nix_go!(@o($o) $($tt)*);
 	};
 	(@o($o:ident)) => {};
-	($($tt:tt)+) => {{
-		use $crate::{nix_path, better_nix_eval::Index};
+	($field:ident $($tt:tt)+) => {{
+		use $crate::{nix_go, better_nix_eval::Index};
+		let field = $field.clone();
 		let mut out = vec![];
-		nix_path!(@o(out) $($tt)*);
-		out
+		nix_go!(@o(out) $($tt)*);
+		field.select(out).await?
 	}}
+}
+#[macro_export]
+macro_rules! nix_go_json {
+	($($tt:tt)*) => {{
+		$crate::nix_go!($($tt)*).as_json().await?
+	}};
 }
 
 #[derive(Clone)]
@@ -405,7 +533,8 @@ pub enum Index {
 	Var(String),
 	String(String),
 	Apply(String),
-	Idx(u32),
+	Expr(NixExprBuilder),
+	ExprApply(NixExprBuilder),
 }
 impl Index {
 	pub fn var(v: impl AsRef<str>) -> Self {
@@ -418,9 +547,6 @@ impl Index {
 	}
 	pub fn attr(v: impl AsRef<str>) -> Self {
 		Self::String(v.as_ref().to_owned())
-	}
-	pub fn idx(v: u32) -> Self {
-		Self::Idx(v)
 	}
 	pub fn apply(v: impl Serialize) -> Self {
 		let serialized = nixlike::serialize(v).expect("invalid value for apply");
@@ -440,8 +566,11 @@ impl Display for Index {
 			Index::Apply(o) => {
 				write!(f, "<apply>({o})")
 			}
-			Index::Idx(i) => {
-				write!(f, "[{i}]")
+			Index::Expr(e) => {
+				write!(f, "[{}]", e.out)
+			}
+			Index::ExprApply(e) => {
+				write!(f, "<apply>({})", e.out)
 			}
 		}
 	}
@@ -460,23 +589,44 @@ impl Display for PathDisplay<'_> {
 		Ok(())
 	}
 }
-pub struct Field {
-	full_path: Vec<Index>,
+struct FieldInner {
+	full_path: Option<Vec<Index>>,
 	session: NixSession,
 	value: Option<u32>,
 }
+fn context(full_path: Option<&[Index]>, query: &str) -> String {
+	if let Some(full_path) = &full_path {
+		format!("full path: {}", PathDisplay(full_path))
+	} else {
+		format!("query: {query:?}")
+	}
+}
+#[derive(Clone)]
+pub struct Field(Arc<FieldInner>);
 impl Field {
 	fn root(session: NixSession) -> Self {
-		Self {
-			full_path: vec![],
+		Self(Arc::new(FieldInner {
+			full_path: Some(vec![]),
 			session,
 			value: None,
-		}
+		}))
+	}
+	async fn new(session: NixSession, query: &str) -> Result<Self> {
+		let vid = session
+			.0
+			.lock()
+			.await
+			.execute_assign(query)
+			.await
+			.with_context(|| context(None, query))?;
+		Ok(Self(Arc::new(FieldInner {
+			full_path: None,
+			session,
+			value: Some(vid),
+		})))
 	}
 	pub async fn field(session: NixSession, field: &str) -> Result<Self> {
-		Self::root(session)
-			.select([Index::var(field)])
-			.await
+		Self::root(session).select([Index::var(field)]).await
 	}
 	pub async fn get_json_deep<'a, V: DeserializeOwned>(
 		&self,
@@ -486,22 +636,27 @@ impl Field {
 		field.as_json().await
 	}
 	pub async fn select<'a>(&self, name: impl IntoIterator<Item = Index>) -> Result<Self> {
+		let mut used_fields = Vec::new();
 		let mut name = name.into_iter();
 
-		let mut full_path = self.full_path.clone();
-		let mut query = if let Some(id) = self.value {
+		let mut full_path = self.0.full_path.clone();
+		let mut query = if let Some(id) = self.0.value {
 			format!("sess_field_{id}")
 		} else {
 			let first = name.next();
 			if let Some(Index::Var(i)) = first {
-				full_path.push(Index::Var(i.clone()));
+				if let Some(full_path) = &mut full_path {
+					full_path.push(Index::Var(i.clone()));
+				}
 				i.clone()
 			} else {
 				panic!("first path item should be variable, got {first:?}")
 			}
 		};
 		for v in name {
-			full_path.push(v.clone());
+			if let Some(full_path) = &mut full_path {
+				full_path.push(v.clone());
+			}
 			match v {
 				Index::Var(_) => panic!("var item may only be first"),
 				Index::String(s) => {
@@ -513,56 +668,85 @@ impl Field {
 					// In cases like `a {}.b` first `{}.b` will be evaluated, so `a {}` should be encased in `()`
 					query = format!("({query} {a})");
 				}
-				Index::Idx(idx) => {
-					query = format!("builtins.elemAt ({query}) {idx}");
+				Index::Expr(e) => {
+					let index = Field::new(self.0.session.clone(), &e.out).await?;
+					used_fields.push(index.clone());
+					query.push('.');
+					let index = format!("${{sess_field_{}}}", index.0.value.expect("value"));
+					query.push_str(&index);
+				}
+				Index::ExprApply(e) => {
+					let index = Field::new(self.0.session.clone(), &e.out).await?;
+					used_fields.push(index.clone());
+					query.push(' ');
+					let index = format!("sess_field_{}", index.0.value.expect("value"));
+					query.push_str(&index);
+					query = format!("({query})");
 				}
 			}
 		}
 
 		let vid = self
+			.0
 			.session
 			.0
 			.lock()
 			.await
 			.execute_assign(&query)
 			.await
-			.with_context(|| format!("full path: {}", PathDisplay(&full_path)))?;
-		Ok(Self {
+			.with_context(|| {
+				if let Some(full_path) = &full_path {
+					format!("full path: {}", PathDisplay(full_path))
+				} else {
+					format!("query: {query:?}")
+				}
+			})?;
+		Ok(Self(Arc::new(FieldInner {
 			full_path,
-			session: self.session.clone(),
+			session: self.0.session.clone(),
 			value: Some(vid),
-		})
+		})))
 	}
 	pub async fn as_json<V: DeserializeOwned>(&self) -> Result<V> {
-		let id = self.value.expect("can't serialize root field");
-		self.session
-			.0
-			.lock()
-			.await
-			.execute_expression_to_json(&format!("sess_field_{id}"))
-			.await
-			.with_context(|| format!("full path: {}", PathDisplay(&self.full_path)))
-	}
-	pub async fn list_fields(&self) -> Result<Vec<String>> {
-		let id = self.value.expect("can't list root fields");
-		self.session
-			.0
-			.lock()
-			.await
-			.execute_expression_to_json(&format!("builtins.attrNames sess_field_{id}"))
-			.await
-			.with_context(|| format!("full path: {}", PathDisplay(&self.full_path)))
-	}
-	pub async fn build(&self) -> Result<HashMap<String, PathBuf>> {
-		let id = self.value.expect("can't use build on not-value");
-		let vid = self
+		let id = self.0.value.expect("can't serialize root field");
+		let query = format!("sess_field_{id}");
+		self.0
 			.session
 			.0
 			.lock()
 			.await
-			.execute_expression_raw(&format!(":b sess_field_{id}"), &mut NixHandler::default())
+			.execute_expression_to_json(&query)
+			.await
+			.with_context(|| context(self.0.full_path.as_deref(), &query))
+	}
+	pub async fn list_fields(&self) -> Result<Vec<String>> {
+		let id = self.0.value.expect("can't list root fields");
+		let query = format!("builtins.attrNames sess_field_{id}");
+		self.0
+			.session
+			.0
+			.lock()
+			.await
+			.execute_expression_to_json(&query)
+			.await
+			.with_context(|| context(self.0.full_path.as_deref(), &query))
+	}
+	pub async fn build(&self) -> Result<HashMap<String, PathBuf>> {
+		let id = self.0.value.expect("can't use build on not-value");
+		let query = format!(":b sess_field_{id}");
+		let vid = self
+			.0
+			.session
+			.0
+			.lock()
+			.await
+			.execute_expression_raw(&query, &mut NixHandler::default())
 			.await?;
-		ensure!(!vid.is_empty(), "build failed: {}", PathDisplay(&self.full_path));
+		ensure!(
+			!vid.is_empty(),
+			"build failed: {}",
+			context(self.0.full_path.as_deref(), &query),
+		);
 		let Some(vid) = vid.strip_prefix("This derivation produced the following outputs:\n")
 		else {
 			panic!("unexpected build output: {vid:?}");
@@ -576,7 +760,7 @@ impl Field {
 		Ok(outputs)
 	}
 }
-impl Drop for Field {
+impl Drop for FieldInner {
 	fn drop(&mut self) {
 		if let Some(id) = self.value {
 			if let Ok(mut lock) = self.session.0.try_lock() {

@@ -1,9 +1,10 @@
 use crate::{
 	fleetdata::{FleetSecret, FleetSharedSecret},
-	host::Config, nix_path,
+	host::Config,
+	nix_go, nix_go_json,
 };
-use anyhow::{bail, ensure, Context, Result};
-use chrono::Utc;
+use anyhow::{anyhow, bail, ensure, Context, Result};
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use futures::{StreamExt, TryStreamExt};
 use owo_colors::OwoColorize;
@@ -17,8 +18,8 @@ use tokio::fs::read_to_string;
 use tracing::{error, info, info_span, warn};
 
 #[derive(Parser)]
-pub enum Secrets {
-	/// Force load keys for all defined hosts
+pub enum Secret {
+	/// Force load host keys for all defined hosts
 	ForceKeys,
 	/// Add secret, data should be provided in stdin
 	AddShared {
@@ -29,14 +30,20 @@ pub enum Secrets {
 		/// Override secret if already present
 		#[clap(long)]
 		force: bool,
+		/// Secret public part
 		#[clap(long)]
 		public: Option<String>,
+		/// Load public part from specified file
 		#[clap(long)]
 		public_file: Option<PathBuf>,
 
+		/// Create a notification on secret expiration
+		#[clap(long)]
+		expires_at: Option<DateTime<Utc>>,
+
 		/// Secret with this name already exists, override its value while keeping the same owners.
 		#[clap(long)]
-		readd: bool,
+		re_add: bool,
 	},
 	/// Add secret, data should be provided in stdin
 	Add {
@@ -81,12 +88,33 @@ pub enum Secrets {
 		prefer_identities: Vec<String>,
 	},
 	List {},
+	InvokeGenerator,
 }
 
-impl Secrets {
+impl Secret {
 	pub async fn run(self, config: &Config) -> Result<()> {
 		match self {
-			Secrets::ForceKeys => {
+			Secret::InvokeGenerator => {
+				let config_field = &config.config_unchecked_field;
+
+				let generate_impure =
+					nix_go!(config_field.sharedSecrets["kube-apiserver.pem"].generateImpure);
+				let on = nix_go!(generate_impure.on);
+				let call_package = nix_go!(
+					config_field.buildableSystems(Obj {
+						localSystem: { config.local_system.clone() }
+					})[on]
+						.config
+						.nixpkgs
+						.pkgs
+						.callPackage
+				);
+				let generator = nix_go!(call_package(generate_impure.generator));
+				let built = generator.build().await?;
+				// .as_json().await?;
+				dbg!(&built);
+			}
+			Secret::ForceKeys => {
 				for host in config.list_hosts().await? {
 					if config.should_skip(&host.name) {
 						continue;
@@ -94,19 +122,20 @@ impl Secrets {
 					config.key(&host.name).await?;
 				}
 			}
-			Secrets::AddShared {
+			Secret::AddShared {
 				mut machines,
 				name,
 				force,
 				public,
 				public_file,
-				readd,
+				expires_at,
+				re_add,
 			} => {
 				let exists = config.has_shared(&name);
-				if exists && !force && !readd {
+				if exists && !force && !re_add {
 					bail!("secret already defined");
 				}
-				if readd {
+				if re_add {
 					// Fixme: use clap to limit this usage
 					ensure!(!force, "--force and --readd are not compatible");
 					ensure!(exists, "secret doesn't exists");
@@ -137,7 +166,7 @@ impl Secrets {
 							.map(|r| Box::new(r) as Box<dyn age::Recipient + Send>)
 							.collect();
 						let mut encryptor = age::Encryptor::with_recipients(recipients)
-							.expect("recipients provided")
+							.ok_or_else(|| anyhow!("no recipients provided"))?
 							.wrap_output(&mut encrypted)?;
 						io::copy(&mut Cursor::new(input), &mut encryptor)?;
 						encryptor.finish()?;
@@ -150,7 +179,7 @@ impl Secrets {
 						owners: machines,
 						secret: FleetSecret {
 							created_at: Utc::now(),
-							expires_at: None,
+							expires_at,
 							secret,
 							public: match (public, public_file) {
 								(Some(v), None) => Some(v),
@@ -164,7 +193,7 @@ impl Secrets {
 					},
 				);
 			}
-			Secrets::Add {
+			Secret::Add {
 				machine,
 				name,
 				force,
@@ -211,7 +240,7 @@ impl Secrets {
 			}
 			// TODO: Instead of using sudo, decode secret on remote machine
 			#[allow(clippy::await_holding_refcell_ref)]
-			Secrets::Read {
+			Secret::Read {
 				name,
 				machine,
 				plaintext,
@@ -228,7 +257,7 @@ impl Secrets {
 					println!("{}", z85::encode(&data));
 				}
 			}
-			Secrets::UpdateShared {
+			Secret::UpdateShared {
 				name,
 				machines,
 				mut add_machines,
@@ -321,7 +350,7 @@ impl Secrets {
 				secret.secret.secret = encrypted;
 				config.replace_shared(name, secret);
 			}
-			Secrets::Regenerate { prefer_identities } => {
+			Secret::Regenerate { prefer_identities } => {
 				{
 					let expected_shared_set = config
 						.list_configured_shared()
@@ -337,10 +366,9 @@ impl Secrets {
 				for name in &config.list_shared() {
 					info!("updating secret: {name}");
 					let mut data = config.shared_secret(name)?;
-					let expected_owners: Vec<String> = config
-						.config_field
-						.get_json_deep(nix_path!(sharedSecrets.{name}.expectedOwners))
-						.await?;
+					let config_field = &config.config_field;
+					let expected_owners: Vec<String> =
+						nix_go_json!(config_field.sharedSecrets[{ name }].expectedOwners);
 					if expected_owners.is_empty() {
 						warn!("secret was removed from fleet config: {name}, removing from data");
 						to_remove.push(name.to_string());
@@ -350,10 +378,8 @@ impl Secrets {
 					let expected_set = expected_owners.iter().collect::<HashSet<_>>();
 					let should_remove = set.difference(&expected_set).next().is_some();
 					if set != expected_set {
-						let owner_dependent: bool = config
-							.config_field
-							.get_json_deep(nix_path!(.sharedSecrets.{name}.ownerDependent))
-							.await?;
+						let owner_dependent: bool =
+							nix_go_json!(config_field.sharedSecrets[{ name }].ownerDependent);
 						if !owner_dependent {
 							warn!("reencrypting secret '{name}' for new owner set");
 							// TODO: force regeneration
@@ -401,7 +427,7 @@ impl Secrets {
 					config.remove_shared(&k);
 				}
 			}
-			Secrets::List {} => {
+			Secret::List {} => {
 				let _span = info_span!("loading secrets").entered();
 				let configured = config.list_configured_shared().await?;
 				#[derive(Tabled)]

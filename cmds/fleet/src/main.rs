@@ -1,5 +1,5 @@
 #![recursion_limit = "512"]
-#![feature(try_blocks)]
+#![feature(try_blocks, lint_reasons)]
 
 pub(crate) mod cmds;
 pub(crate) mod command;
@@ -17,7 +17,7 @@ use std::time::Duration;
 use anyhow::{bail, Result};
 use clap::Parser;
 
-use cmds::{build_systems::BuildSystems, info::Info, secrets::Secrets};
+use cmds::{build_systems::BuildSystems, info::Info, secrets::Secret};
 use futures::future::LocalBoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::TryStreamExt;
@@ -73,7 +73,7 @@ enum Opts {
 	BuildSystems(BuildSystems),
 	/// Secret management
 	#[clap(subcommand)]
-	Secrets(Secrets),
+	Secret(Secret),
 	/// Upload prefetch directory to the nix store
 	Prefetch(Prefetch),
 	/// Config parsing
@@ -92,7 +92,7 @@ struct RootOpts {
 async fn run_command(config: &Config, command: Opts) -> Result<()> {
 	match command {
 		Opts::BuildSystems(c) => c.run(config).await?,
-		Opts::Secrets(s) => s.run(config).await?,
+		Opts::Secret(s) => s.run(config).await?,
 		Opts::Info(i) => i.run(config).await?,
 		Opts::Prefetch(p) => p.run(config).await?,
 	};

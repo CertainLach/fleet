@@ -337,6 +337,8 @@ impl Handler for NixHandler {
 					if !text.is_empty()
 						&& text != "querying info about missing paths"
 						&& text != "copying 0 paths"
+						// Too much spam on lazy-trees branch
+						&& !(text.starts_with("copying '") && text.ends_with("' to the store"))
 					{
 						let span = info_span!("job");
 						span.pb_start();

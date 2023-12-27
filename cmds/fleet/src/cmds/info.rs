@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::host::Config;
-use crate::nix_path;
+use crate::nix_go_json;
 use anyhow::{ensure, Result};
 use clap::Parser;
 
@@ -37,12 +37,9 @@ impl Info {
 			InfoCmd::ListHosts { ref tagged } => {
 				'host: for host in config.list_hosts().await? {
 					if !tagged.is_empty() {
-						let tags: Vec<String> = config
-							.fleet_field
-							.select(nix_path!(.configuredSystems.{&host.name}.config.tags))
-							.await?
-							.as_json()
-							.await?;
+						let fleet_field = &config.fleet_field;
+						let tags: Vec<String> =
+							nix_go_json!(fleet_field.configuredSystems[{ host.name }].config.tags);
 						for tag in tagged {
 							if !tags.contains(tag) {
 								continue 'host;
@@ -64,20 +61,12 @@ impl Info {
 				let mut out = <BTreeSet<String>>::new();
 				let host = config.system_config(&host).await?;
 				if external {
-					out.extend(
-						host.select(nix_path!(.network.externalIps))
-							.await?
-							.as_json::<Vec<String>>()
-							.await?,
-					);
+					let data: Vec<String> = nix_go_json!(host.network.externalIps);
+					out.extend(data);
 				}
 				if internal {
-					out.extend(
-						host.select(nix_path!(.network.internalIps))
-							.await?
-							.as_json::<Vec<String>>()
-							.await?,
-					);
+					let data: Vec<String> = nix_go_json!(host.network.internalIps);
+					out.extend(data);
 				}
 				for ip in out {
 					data.push(ip);

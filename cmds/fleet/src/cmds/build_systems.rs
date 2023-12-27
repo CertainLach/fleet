@@ -4,8 +4,8 @@ use std::{env::current_dir, time::Duration};
 
 use crate::command::MyCommand;
 use crate::host::Config;
-use crate::nix_path;
-use anyhow::{anyhow, Result, Context};
+use crate::nix_go;
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use itertools::Itertools;
 use tokio::{task::LocalSet, time::sleep};
@@ -290,12 +290,10 @@ impl BuildSystems {
 	async fn build_task(self, config: Config, host: String) -> Result<()> {
 		info!("building");
 		let action = Action::from(self.subcommand.clone());
-		let drv = config
-			.fleet_field
-			.select(nix_path!(.buildSystems((serde_json::json!({
-				"localSystem": config.local_system.clone(),
-			}))).{action.build_attr()}.{&host}))
-			.await.context("system attribute")?;
+		let fleet_field = &config.fleet_field;
+		let drv = nix_go!(fleet_field.buildSystems(Obj {
+			localSystem: { config.local_system.clone() }
+		}));
 		let outputs = drv.build().await.map_err(|e| {
 			if action.build_attr() == "sdImage" {
 				info!("sd-image build failed");
