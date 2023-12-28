@@ -25,8 +25,8 @@ fn write_nix_obj_key_buf(k: &str, v: &Value, out: &mut String) {
 	}
 }
 
-fn write_nix_str(str: &str, out: &mut String) {
-	out.push_str(&format!(
+pub fn escape_string(str: &str) -> String {
+	format!(
 		"\"{}\"",
 		str.replace('\\', "\\\\")
 			.replace('"', "\\\"")
@@ -34,7 +34,11 @@ fn write_nix_str(str: &str, out: &mut String) {
 			.replace('\t', "\\t")
 			.replace('\r', "\\r")
 			.replace('$', "\\$")
-	))
+	)
+}
+
+pub fn write_nix_str(str: &str, out: &mut String) {
+	out.push_str(&escape_string(str))
 }
 
 fn write_nix_buf(value: &Value, out: &mut String) {

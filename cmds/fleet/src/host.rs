@@ -1,21 +1,25 @@
 use std::{
 	env::current_dir,
 	ffi::{OsStr, OsString},
+	fmt::Display,
 	io::Write,
 	ops::Deref,
 	path::PathBuf,
+	str::FromStr,
 	sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
+use age::Recipient;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{ArgGroup, Parser};
 use openssh::SessionBuilder;
+use serde::de::DeserializeOwned;
 use tempfile::NamedTempFile;
 
 use crate::{
 	better_nix_eval::{Field, NixSessionPool},
 	command::MyCommand,
-	fleetdata::{FleetData, FleetSecret, FleetSharedSecret},
+	fleetdata::{FleetData, FleetSecret, FleetSharedSecret, SecretData},
 	nix_go, nix_go_json,
 };
 
@@ -80,20 +84,41 @@ impl ConfigHost {
 		cmd.arg(path);
 		cmd.run_string().await
 	}
+	pub async fn read_file_json<D: DeserializeOwned>(&self, path: impl AsRef<OsStr>) -> Result<D> {
+		let text = self.read_file_text(path).await?;
+		Ok(serde_json::from_str(&text)?)
+	}
+	pub async fn read_file_value<D: FromStr>(&self, path: impl AsRef<OsStr>) -> Result<D>
+	where
+		<D as FromStr>::Err: Display,
+	{
+		let text = self.read_file_text(path).await?;
+		D::from_str(&text).map_err(|e| anyhow!("failed to parse value: {e}"))
+	}
 	pub async fn cmd(&self, cmd: impl AsRef<OsStr>) -> Result<MyCommand> {
 		let session = self.open_session().await?;
 		Ok(MyCommand::new_on(cmd, session))
 	}
 
-	pub async fn decrypt(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+	pub async fn decrypt(&self, data: SecretData) -> Result<Vec<u8>> {
 		let mut cmd = self.cmd("fleet-install-secrets").await?;
-		cmd.arg("decrypt").eqarg("--secret", z85::encode(&data));
+		cmd.arg("decrypt").eqarg("--secret", data.encode_z85());
 		let encoded = cmd
 			.sudo()
 			.run_string()
 			.await
 			.context("failed to call remote host for decrypt")?;
 		z85::decode(encoded.trim_end()).context("bad encoded data? outdated host?")
+	}
+	/// Returns path for futureproofing, as path might change i.e on conversion to CA
+	pub async fn remote_derivation(&self, path: &PathBuf) -> Result<PathBuf> {
+		let mut nix = MyCommand::new("nix");
+		nix.arg("copy")
+			.arg("--substitute-on-destination")
+			.comparg("--to", format!("ssh-ng://{}", self.name))
+			.arg(path);
+		nix.run_nix().await?;
+		Ok(path.to_owned())
 	}
 }
 
@@ -166,8 +191,10 @@ impl Config {
 	}
 	/// Shared secrets configured in fleet.nix or in flake
 	pub async fn list_configured_shared(&self) -> Result<Vec<String>> {
-		let config_field = &self.config_field;
-		nix_go!(config_field.sharedSecrets).list_fields().await
+		let config_field = &self.config_unchecked_field;
+		nix_go!(config_field.configUnchecked.sharedSecrets)
+			.list_fields()
+			.await
 	}
 	/// Shared secrets configured in fleet.nix
 	pub fn list_shared(&self) -> Vec<String> {
@@ -203,12 +230,11 @@ impl Config {
 	pub async fn reencrypt_on_host(
 		&self,
 		host: &str,
-		data: Vec<u8>,
+		data: SecretData,
 		targets: Vec<String>,
-	) -> Result<Vec<u8>> {
-		let data = z85::encode(&data);
+	) -> Result<SecretData> {
 		let mut recmd = MyCommand::new("fleet-install-secrets");
-		recmd.arg("reencrypt").eqarg("--secret", data);
+		recmd.arg("reencrypt").eqarg("--secret", data.encode_z85());
 		for target in targets {
 			recmd.eqarg("--targets", target);
 		}
@@ -219,7 +245,7 @@ impl Config {
 			.context("failed to call remote host for decrypt")?
 			.trim()
 			.to_owned();
-		z85::decode(encoded).context("bad encoded data? outdated host?")
+		SecretData::decode_z85(&encoded)
 	}
 
 	pub fn host_secret(&self, host: &str, secret: &str) -> Result<FleetSecret> {
@@ -240,9 +266,9 @@ impl Config {
 		Ok(secret.clone())
 	}
 	pub async fn shared_secret_expected_owners(&self, secret: &str) -> Result<Vec<String>> {
-		let config_field = &self.config_field;
+		let config_field = &self.config_unchecked_field;
 		Ok(nix_go_json!(
-			config_field.sharedSecrets[{ secret }].expectedOwners
+			config_field.configUnchecked.sharedSecrets[{ secret }].expectedOwners
 		))
 	}
 

@@ -1,8 +1,13 @@
+use age::Recipient;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use itertools::Itertools;
 use nixlike::format_nix;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::BTreeMap;
+use std::{
+	collections::BTreeMap,
+	io::{self, Cursor},
+};
 use tempfile::TempDir;
 use tokio::{
 	fs::{self, File},
@@ -41,6 +46,43 @@ pub struct FleetSharedSecret {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+pub struct SecretData(
+	#[serde(
+		default,
+		skip_serializing_if = "Vec::is_empty",
+		serialize_with = "as_z85",
+		deserialize_with = "from_z85"
+	)]
+	pub Vec<u8>,
+);
+impl SecretData {
+	/// Returns None if recipients.is_empty()
+	pub fn encrypt(
+		recipients: impl IntoIterator<Item = impl Recipient + Send + 'static>,
+		data: Vec<u8>,
+	) -> Option<Self> {
+		let mut encrypted = vec![];
+		let recipients = recipients
+			.into_iter()
+			.map(|v| Box::new(v) as Box<dyn Recipient + Send>)
+			.collect_vec();
+		let mut encryptor = age::Encryptor::with_recipients(recipients)?
+			.wrap_output(&mut encrypted)
+			.expect("in memory write");
+		io::copy(&mut Cursor::new(data), &mut encryptor).expect("in memory copy");
+		encryptor.finish().expect("in memory flush");
+		Some(Self(encrypted))
+	}
+	pub fn encode_z85(&self) -> String {
+		z85::encode(&self.0)
+	}
+	pub fn decode_z85(v: &str) -> Result<Self> {
+		let v = z85::decode(v)?;
+		Ok(Self(v))
+	}
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 #[must_use]
 pub struct FleetSecret {
@@ -51,13 +93,8 @@ pub struct FleetSecret {
 	pub expires_at: Option<DateTime<Utc>>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub public: Option<String>,
-	#[serde(
-		default,
-		skip_serializing_if = "Vec::is_empty",
-		serialize_with = "as_z85",
-		deserialize_with = "from_z85"
-	)]
-	pub secret: Vec<u8>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub secret: Option<SecretData>,
 }
 
 fn as_z85<S>(key: &[u8], serializer: S) -> Result<S::Ok, S::Error>

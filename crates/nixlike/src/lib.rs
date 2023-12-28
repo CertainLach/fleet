@@ -10,6 +10,8 @@ mod de_impl;
 mod se_impl;
 mod to_string;
 
+pub use to_string::escape_string;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
 	#[error("bad number")]

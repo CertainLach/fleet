@@ -2,7 +2,9 @@ use std::str::FromStr;
 
 use crate::command::MyCommand;
 use crate::host::Config;
+use age::Recipient;
 use anyhow::{anyhow, Result};
+use futures::{StreamExt, TryStreamExt};
 use itertools::Itertools;
 use tracing::warn;
 
@@ -36,9 +38,16 @@ impl Config {
 		}
 	}
 	/// Insecure, requires root
-	pub async fn recipient(&self, host: &str) -> anyhow::Result<age::ssh::Recipient> {
+	pub async fn recipient(&self, host: &str) -> anyhow::Result<impl Recipient> {
 		let key = self.key(host).await?;
 		age::ssh::Recipient::from_str(&key).map_err(|e| anyhow!("parse recipient error: {:?}", e))
+	}
+
+	pub async fn recipients(&self, hosts: &[&str]) -> Result<Vec<impl Recipient>> {
+		futures::stream::iter(hosts.iter())
+			.then(|m| self.recipient(m))
+			.try_collect::<Vec<_>>()
+			.await
 	}
 
 	#[allow(dead_code)]

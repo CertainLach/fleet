@@ -247,7 +247,7 @@ impl NixSessionInner {
 		Ok(())
 	}
 	async fn send_command(&mut self, cmd: impl AsRef<[u8]>) -> Result<()> {
-		if tracing::enabled!(Level::DEBUG) {
+		if tracing::enabled!(Level::DEBUG) && cmd.as_ref() != REPL_DELIMITER.as_bytes() {
 			let cmd_str = String::from_utf8_lossy(cmd.as_ref());
 			tracing::debug!("{cmd_str}");
 		};
@@ -628,13 +628,6 @@ impl Field {
 	pub async fn field(session: NixSession, field: &str) -> Result<Self> {
 		Self::root(session).select([Index::var(field)]).await
 	}
-	pub async fn get_json_deep<'a, V: DeserializeOwned>(
-		&self,
-		name: impl IntoIterator<Item = Index>,
-	) -> Result<V> {
-		let field = self.select(name).await?;
-		field.as_json().await
-	}
 	pub async fn select<'a>(&self, name: impl IntoIterator<Item = Index>) -> Result<Self> {
 		let mut used_fields = Vec::new();
 		let mut name = name.into_iter();
@@ -719,9 +712,34 @@ impl Field {
 			.await
 			.with_context(|| context(self.0.full_path.as_deref(), &query))
 	}
+	pub async fn has_field(&self, name: &str) -> Result<bool> {
+		let id = self.0.value.expect("can't list root fields");
+		let key = nixlike::escape_string(name);
+		let query = format!("sess_field_{id} ? {key}");
+		self.0
+			.session
+			.0
+			.lock()
+			.await
+			.execute_expression_to_json(&query)
+			.await
+			.with_context(|| context(self.0.full_path.as_deref(), &query))
+	}
 	pub async fn list_fields(&self) -> Result<Vec<String>> {
 		let id = self.0.value.expect("can't list root fields");
 		let query = format!("builtins.attrNames sess_field_{id}");
+		self.0
+			.session
+			.0
+			.lock()
+			.await
+			.execute_expression_to_json(&query)
+			.await
+			.with_context(|| context(self.0.full_path.as_deref(), &query))
+	}
+	pub async fn type_of(&self) -> Result<String> {
+		let id = self.0.value.expect("can't list root fields");
+		let query = format!("builtins.typeOf sess_field_{id}");
 		self.0
 			.session
 			.0
