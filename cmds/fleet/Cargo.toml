@@ -1,7 +1,7 @@
 [package]
 name = "fleet"
 description = "NixOS configuration management"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Yaroslav Bolyukin <iam@lach.pw>"]
 edition = "2021"
 

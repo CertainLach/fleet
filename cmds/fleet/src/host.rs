@@ -14,6 +14,7 @@ use clap::{ArgGroup, Parser};
 use openssh::SessionBuilder;
 use serde::de::DeserializeOwned;
 use tempfile::NamedTempFile;
+use tracing::instrument;
 
 use crate::{
 	better_nix_eval::{Field, NixSessionPool},
@@ -28,12 +29,13 @@ pub struct FleetConfigInternals {
 	pub opts: FleetOpts,
 	pub data: Mutex<FleetData>,
 	pub nix_args: Vec<OsString>,
-	/// fleetConfigurations.<name>.<localSystem>
-	pub fleet_field: Field,
-	/// fleet_config.configUnchecked
+	/// fleet_config.config
 	pub config_field: Field,
-	/// fleet_config.unchecked
+	/// fleet_config.unchecked.config
 	pub config_unchecked_field: Field,
+
+	/// import nixpkgs {system = local};
+	pub default_pkgs: Field,
 }
 
 #[derive(Clone)]
@@ -48,9 +50,12 @@ impl Deref for Config {
 }
 
 pub struct ConfigHost {
+	config: Config,
 	pub name: String,
 	pub local: bool,
 	pub session: OnceLock<Arc<openssh::Session>>,
+
+	pub nixos_config: Field,
 }
 impl ConfigHost {
 	async fn open_session(&self) -> Result<Arc<openssh::Session>> {
@@ -64,7 +69,7 @@ impl ConfigHost {
 		let session = session
 			.connect(&self.name)
 			.await
-			.map_err(|e| anyhow!("ssh error: {e}"))?;
+			.map_err(|e| anyhow!("ssh error while connecting to {}: {e}", self.name))?;
 		let session = Arc::new(session);
 		self.session.set(session.clone()).expect("TOCTOU happened");
 		Ok(session)
@@ -119,7 +124,8 @@ impl ConfigHost {
 		let mut cmd = self.cmd("fleet-install-secrets").await?;
 		cmd.arg("reencrypt").eqarg("--secret", data.encode_z85());
 		for target in targets {
-			cmd.eqarg("--targets", target);
+			let key = self.config.key(&target).await?;
+			cmd.eqarg("--targets", key);
 		}
 		let encoded = cmd
 			.sudo()
@@ -139,7 +145,7 @@ impl ConfigHost {
 			.arg("--substitute-on-destination")
 			.comparg("--to", format!("ssh-ng://{}", self.name))
 			.arg(path);
-		nix.run_nix().await?;
+		nix.run_nix().await.context("nix copy")?;
 		Ok(path.to_owned())
 	}
 	pub async fn systemctl_stop(&self, name: &str) -> Result<()> {
@@ -161,6 +167,25 @@ impl ConfigHost {
 		}
 		cmd.run().await
 	}
+
+	pub async fn list_configured_secrets(&self) -> Result<Vec<String>> {
+		let nixos = &self.nixos_config;
+		let secrets = nix_go!(nixos.secrets);
+		let mut out = Vec::new();
+		for name in secrets.list_fields().await? {
+			let secret = nix_go!(secrets[{ name }]);
+			let is_shared: bool = nix_go_json!(secret.shared);
+			if is_shared {
+				continue;
+			}
+			out.push(name);
+		}
+		Ok(out)
+	}
+	pub async fn secret_field(&self, name: &str) -> Result<Field> {
+		let nixos = &self.nixos_config;
+		Ok(nix_go!(nixos.secrets[{ name }]))
+	}
 }
 
 impl Config {
@@ -178,28 +203,28 @@ impl Config {
 	}
 
 	pub async fn host(&self, name: &str) -> Result<ConfigHost> {
+		let config = &self.config_unchecked_field;
+		let nixos_config = nix_go!(config.configuredSystems[{ name }].config);
 		Ok(ConfigHost {
+			config: self.clone(),
 			name: name.to_owned(),
 			local: self.is_local(name),
 			session: OnceLock::new(),
+			nixos_config,
 		})
 	}
 	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
-		let fleet_field = &self.fleet_field;
-		let names = nix_go!(fleet_field.configuredHosts).list_fields().await?;
+		let config = &self.config_unchecked_field;
+		let names = nix_go!(config.hosts).list_fields().await?;
 		let mut out = vec![];
 		for name in names {
-			out.push(ConfigHost {
-				local: self.is_local(&name),
-				name,
-				session: OnceLock::new(),
-			})
+			out.push(self.host(&name).await?);
 		}
 		Ok(out)
 	}
 	pub async fn system_config(&self, host: &str) -> Result<Field> {
-		let fleet_field = &self.fleet_field;
-		Ok(nix_go!(fleet_field.configuredSystems[{ host }].config))
+		let fleet_field = &self.config_unchecked_field;
+		Ok(nix_go!(fleet_field.hosts[{ host }].nixosSystem.config))
 	}
 
 	pub(super) fn data(&self) -> MutexGuard<FleetData> {
@@ -231,6 +256,14 @@ impl Config {
 	pub fn remove_shared(&self, secret: &str) {
 		let mut data = self.data_mut();
 		data.shared_secrets.remove(secret);
+	}
+
+	pub fn list_secrets(&self, host: &str) -> Vec<String> {
+		let data = self.data();
+		let Some(secrets) = data.host_secrets.get(host) else {
+			return Vec::new();
+		};
+		secrets.keys().cloned().collect()
 	}
 
 	pub fn has_secret(&self, host: &str, secret: &str) -> bool {
@@ -319,17 +352,26 @@ impl FleetOpts {
 		let pool = NixSessionPool::new(directory.as_os_str().to_owned(), nix_args.clone()).await?;
 		let root_field = pool.get().await?;
 
+		let builtins_field = Field::field(root_field.clone(), "builtins").await?;
 		if self.local_system == "detect" {
-			let builtins_field = Field::field(root_field.clone(), "builtins").await?;
 			self.local_system = nix_go_json!(builtins_field.currentSystem);
 		}
 		let local_system = self.local_system.clone();
 
 		let fleet_root = Field::field(root_field, "fleetConfigurations").await?;
-
 		let fleet_field = nix_go!(fleet_root.default);
-		let config_field = nix_go!(fleet_field.configUnchecked);
-		let config_unchecked_field = nix_go!(fleet_field.unchecked);
+
+		let config_field = nix_go!(fleet_field.config);
+		let config_unchecked_field = nix_go!(fleet_field.unchecked.config);
+
+		let import = nix_go!(builtins_field.import);
+		let overlays = nix_go!(fleet_field.overlays);
+		let nixpkgs = nix_go!(fleet_field.nixpkgs | import);
+
+		let default_pkgs = nix_go!(nixpkgs(Obj {
+			overlays,
+			system: { self.local_system.clone() },
+		}));
 
 		let mut fleet_data_path = directory.clone();
 		fleet_data_path.push("fleet.nix");
@@ -342,9 +384,9 @@ impl FleetOpts {
 			data,
 			local_system,
 			nix_args,
-			fleet_field,
 			config_field,
 			config_unchecked_field,
+			default_pkgs,
 		})))
 	}
 }

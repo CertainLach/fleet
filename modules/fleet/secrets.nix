@@ -1,69 +1,48 @@
 { lib, fleetLib, config, ... }: with lib; with fleetLib;
 let
-  sharedSecret = with types; {
+  sharedSecret = with types; ({config, ...}: {
     options = {
       expectedOwners = mkOption {
-        type = listOf str;
+        type = nullOr (listOf str);
         description = ''
-          List of hosts to encrypt secret for
+          List of hosts to encrypt secret for. null if managed by user (= via owners field from fleet.nix)
 
           Secrets would be decrypted and stored to /run/secrets/$\{name} on owners
         '';
-        default = [ ];
       };
-      ownerDependent = mkOption {
+      # TODO: Aren't those options may be just desugared to data/expectedData?
+      regenerateOnOwnerAdded = mkOption {
         type = bool;
-        description = "Is this secret owner-dependent, and needs to be regenerated on ownership set change, or it may be just reencrypted";
+        description = ''
+          Is this secret owner-dependent, and needs to be regenerated on ownership set change, or it may be just reencrypted.
+          
+          You want to have this option set to true, when this secret contains some reference to its owners, i.e x509 SANs.
+        '';
       };
-      generateImpure = mkOption {
-        type = unspecified;
+      regenerateOnOwnerRemoved = mkOption {
+        default = config.regenerateOnOwnerAdded;
+        type = bool;
+        description = ''
+          Should this secret be removed on owner removal, or it may be just reencrypted
+          
+          Most probably its value should be equal to regenerateOnOwnerAdded, override only if you know what are you doing.
+          Contrary to regenerateOnOwnerAdded, you may want to set this option to false, when host permissions are revoked
+          in some other way than by this secret ownership, I.e by firewall/etc.
+        '';
       };
       generator = mkOption {
-        type = nullOr (submodule {
-          packages = mkOption {
-            type = attrsOf package;
-            description = ''
-              Derivation to execute for shared secret generation (key = system).
-              This derivation should produce directory, with exactly two files:
-                - publicData
-                - encryptedSecretData
-
-              If null - secret value may only be created manually.
-            '';
-          };
-          expectedData = mkOption {
-            type = types.unspecified;
-            description = "Data expected to be used for secret generation, if doesn't match specified - secret should be regenerated";
-          };
-          dependencies = mkOption {
-            type = listOf str;
-            description = ''
-              List of secrets, on which this secret depends.
-
-              During generation, generator command will be ran on host, which already has specified secrets generated.
-            '';
-            default = [];
-          };
-          data = mkOption {
-            type = types.unspecified;
-            description = "Data used for secret generation. Imported from fleet.nix";
-            default = null;
-            internal = true;
-          };
-        });
-        default = null;
-      };
-      expireIn = mkOption {
-        type = nullOr int;
-        description = "Time in hours, in which this secret should be regenerated";
+        type = nullOr unspecified;
+        description = "Derivation to evaluate for secret generation";
         default = null;
       };
       createdAt = mkOption {
         type = nullOr str;
+        description = "When this secret was (re)generated";
         default = null;
       };
       expiresAt = mkOption {
         type = nullOr str;
+        description = "On which date this secret will expire, someone should regenerate this secret before it expires.";
         default = null;
       };
 
@@ -78,6 +57,9 @@ let
         '';
         default = [ ];
       };
+      # TODO: Make secret generator generate arbitrary number of secret/public parts?
+      # Make it generate a folder, where all files except suffixed by .enc are public, and the rest are secret?
+      # How should modules refer to those files then?
       public = mkOption {
         type = nullOr str;
         description = "Secret public data. Imported from fleet.nix";
@@ -90,7 +72,7 @@ let
         internal = true;
       };
     };
-  };
+  });
   hostSecret = with types; {
     options = {
       createdAt = mkOption {
@@ -132,7 +114,7 @@ in
   config = {
     assertions = mapAttrsToList
       (name: secret: {
-        assertion = builtins.sort (a: b: a < b) secret.owners == builtins.sort (a: b: a < b) secret.expectedOwners;
+        assertion = secret.expectedOwners == null || builtins.sort (a: b: a < b) secret.owners == builtins.sort (a: b: a < b) secret.expectedOwners;
         message = "Shared secret ${name} is expected to be encrypted for ${builtins.toJSON secret.expectedOwners}, but it is encrypted for ${builtins.toJSON secret.owners}. Run fleet secrets regenerate to fix";
       })
       config.sharedSecrets;
@@ -141,6 +123,7 @@ in
         let
           cleanupSecret = (secretName: v: {
             inherit (v) public secret;
+            shared = true;
           });
         in
         [

@@ -1,18 +1,31 @@
 {flake-utils}: {
   fleetConfiguration = {
+    # TODO: Provide by fleet, instead of requesting user to provide it.
+    # This is not good that user needs to provide it, as it becomes a flake data, and fleet arbitrarily rewriting it
+    # always dirnets the flake. Instead, fleetConfiguration should return function, parameters of which should be filled
+    # by fleet itself, which is possible since fleet moving to nix repl execution.
     data,
     nixpkgs,
+    overlays ? [],
     hosts,
-    ...
-  } @ allConfig: let
+    modules,
+    globalModules ? [],
+  }: let
     hostNames = nixpkgs.lib.attrNames hosts;
-    config = builtins.removeAttrs allConfig ["nixpkgs" "data"];
     fleetLib = import ./fleetLib.nix {
       inherit nixpkgs hostNames;
     };
   in let
     root = nixpkgs.lib.evalModules {
-      modules = (import ../modules/fleet/_modules.nix) ++ [config data];
+      modules =
+        (import ../modules/fleet/_modules.nix)
+        ++ [
+          data
+          ({...}: {
+            inherit globalModules hosts;
+          })
+        ]
+        ++ modules;
       specialArgs = {
         inherit nixpkgs fleetLib;
       };
@@ -25,84 +38,20 @@
     withData = {
       root,
       data,
-    }: rec {
+    }: {
       configuredHosts = root.config.hosts;
-      configuredUncheckedHosts = root.config.hosts;
-      configuredSystems = configuredSystemsWithExtraModules [];
-      configuredSystemsWithExtraModules = extraModules:
-        nixpkgs.lib.listToAttrs (
-          map
-          (
-            name: {
-              inherit name;
-              value = nixpkgs.lib.nixosSystem {
-                system = configuredHosts.${name}.system;
-                modules = configuredHosts.${name}.modules ++ extraModules;
-                specialArgs = {
-                  inherit fleetLib;
-                  fleet = fleetLib.hostsToAttrs (host: configuredSystems.${host}.config);
-                };
-              };
-            }
-          )
-          (builtins.attrNames root.config.hosts)
-        );
-      buildableSystems = {localSystem}: let
-        buildConfigurationModule = {config, ...}: {
-          # Equivalent to nixpkgs.localSystem
-          # nixpkgs.system = localSystem;
-          nixpkgs.buildPlatform.system = localSystem;
-        };
-      in
-        configuredSystemsWithExtraModules [
-          buildConfigurationModule
-        ];
-      buildSystems = {localSystem}: let
-        buildConfigurationModule = {config, ...}: {
-          # Equivalent to nixpkgs.localSystem
-          # nixpkgs.system = localSystem;
-          nixpkgs.buildPlatform.system = localSystem;
-        };
-      in {
-        toplevel = builtins.mapAttrs (_name: value: value.config.system.build.toplevel) (configuredSystemsWithExtraModules [
-          buildConfigurationModule
-          ({...}: {
-            buildTarget = "toplevel";
-          })
-        ]);
-        sdImage = builtins.mapAttrs (_name: value: value.config.system.build.sdImage) (configuredSystemsWithExtraModules [
-          buildConfigurationModule
-          #(nixpkgs + "/nixos/modules/installer/sd-card/sd-image-aarch64-installer.nix")
-          ({...}: {
-            buildTarget = "sd-image";
-          })
-        ]);
-        installationCd = builtins.mapAttrs (_name: value: value.config.system.build.isoImage) (configuredSystemsWithExtraModules [
-          buildConfigurationModule
-          (nixpkgs + "/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix")
-          ({lib, ...}: {
-            buildTarget = "installation-cd";
-            # Needed for https://github.com/NixOS/nixpkgs/issues/58959
-            boot.supportedFilesystems = lib.mkForce ["btrfs" "reiserfs" "vfat" "f2fs" "xfs" "ntfs" "cifs"];
-          })
-        ]);
-      };
-      configUnchecked = root.config;
+      config = root.config;
     };
     defaultData = withData {
       inherit data;
       root = checkedRoot;
     };
     uncheckedData = withData {inherit data root;};
-  in rec {
-    inherit (defaultData) configuredHosts configuredSystems buildSystems configUnchecked buildableSystems;
+  in {
+    inherit nixpkgs overlays;
+    inherit (defaultData) configuredHosts configuredSystems config buildableSystems;
     unchecked = {
-      inherit (uncheckedData) configuredHosts configuredSystems buildSystems configUnchecked buildableSystems;
-    };
-    injectData = data: let
-      injectedData = withData data;
-    in {
-      inherit (injectedData) configuredHosts configuredSystems buildSystems configUnchecked;
+      inherit (uncheckedData) configuredHosts configuredSystems config buildableSystems;
     };
   };
 }

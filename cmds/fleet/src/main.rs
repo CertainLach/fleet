@@ -12,6 +12,8 @@ pub(crate) mod extra_args;
 mod fleetdata;
 
 use std::ffi::OsString;
+use std::io::{stderr, stdout, Write};
+use std::process::exit;
 use std::time::Duration;
 
 use anyhow::{bail, Result};
@@ -24,7 +26,7 @@ use futures::TryStreamExt;
 use host::{Config, FleetOpts};
 use human_repr::HumanCount;
 use indicatif::{ProgressState, ProgressStyle};
-use tracing::info;
+use tracing::{error, info};
 use tracing::{info_span, Instrument};
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -81,7 +83,7 @@ enum Opts {
 }
 
 #[derive(Parser)]
-#[clap(version = "1.0", author)]
+#[clap(version, author)]
 struct RootOpts {
 	#[clap(flatten)]
 	fleet_opts: FleetOpts,
@@ -136,13 +138,13 @@ fn setup_logging() {
 		),
 	);
 
-	let filter = EnvFilter::from_default_env();
+	let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
 	tracing_subscriber::registry()
 		.with(
 			tracing_subscriber::fmt::layer()
 				.without_time()
-				.with_target(false)
+				.with_target(true)
 				.with_writer(indicatif_layer.get_stderr_writer())
 				.with_filter(filter), // .withou,
 		)
@@ -151,8 +153,15 @@ fn setup_logging() {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
 	setup_logging();
+	if let Err(e) = main_real().await {
+		error!("{e:#}");
+		exit(1);
+	}
+}
+
+async fn main_real() -> Result<()> {
 	let _ = better_nix_eval::TOKIO_RUNTIME.set(tokio::runtime::Handle::current());
 
 	let nix_args = std::env::var_os("NIX_ARGS")

@@ -1,49 +1,82 @@
-{ lib, fleetLib, config, ... }: with lib;
-let
-  host = with types; {
-    options = {
-      modules = mkOption {
-        type = listOf (mkOptionType {
-          name = "submodule";
-          inherit (submodule { }) check;
-          merge = lib.options.mergeOneOption;
-          description = "Nixos modules";
-        });
-        description = "List of nixos modules";
-        default = [ ];
+{
+  lib,
+  fleetLib,
+  config,
+  nixpkgs,
+  ...
+}:
+with lib; let
+  hostModule = with types;
+    {...} @ hostConfig: {
+      options = {
+        modules = mkOption {
+          type = listOf (mkOptionType {
+            name = "submodule";
+            inherit (submodule {}) check;
+            merge = lib.options.mergeOneOption;
+            description = "Nixos modules";
+          });
+          description = "List of nixos modules";
+          default = [];
+        };
+        system = mkOption {
+          type = str;
+          description = "Type of system";
+        };
+        encryptionKey = mkOption {
+          type = str;
+          description = "Encryption key";
+        };
+        nixosSystem = mkOption {
+          type = unspecified;
+          description = "Nixos configuration";
+        };
       };
-      system = mkOption {
-        type = str;
-        description = "Type of system";
-      };
-      encryptionKey = mkOption {
-        type = str;
-        description = "Encryption key";
+      config.nixosSystem = nixpkgs.lib.nixosSystem {
+        inherit (hostConfig.config) system modules;
+        specialArgs = {
+          inherit fleetLib;
+          fleet = fleetLib.hostsToAttrs (host: config.hosts.${host}.nixosSystem.config);
+        };
       };
     };
+  overlayType = mkOptionType {
+    name = "nixpkgs-overlay";
+    description = "nixpkgs overlay";
+    check = lib.isFunction;
+    merge = lib.mergeOneOption;
   };
-in
-{
+in {
   options = with types; {
     hosts = mkOption {
-      type = attrsOf (submodule host);
-      default = { };
+      type = attrsOf (submodule hostModule);
+      default = {};
       description = "Configurations of individual hosts";
     };
     globalModules = mkOption {
       type = listOf (mkOptionType {
         name = "submodule";
-        inherit (submodule { }) check;
+        inherit (submodule {}) check;
         merge = lib.options.mergeOneOption;
         description = "Nixos modules";
       });
       description = "Modules, which should be added to every system";
-      default = [ ];
+      default = [];
+    };
+    overlays = mkOption {
+      default = [];
+      type = listOf overlayType;
     };
   };
   config = {
     hosts = fleetLib.hostsToAttrs (host: {
-      modules = config.globalModules;
+      modules =
+        config.globalModules
+        ++ [
+          ({...}: {
+            nixpkgs.overlays = config.overlays;
+          })
+        ];
     });
     globalModules = import ../../nixos/modules/module-list.nix;
   };

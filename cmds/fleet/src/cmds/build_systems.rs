@@ -53,7 +53,7 @@ impl PackageAction {
 	fn build_attr(&self) -> String {
 		match self {
 			PackageAction::SdImage => "sdImage".to_owned(),
-			PackageAction::InstallationCd => "installationCd".to_owned(),
+			PackageAction::InstallationCd => "isoImage".to_owned(),
 		}
 	}
 }
@@ -178,7 +178,7 @@ async fn execute_upload(
 	if !build.disable_rollback {
 		let _span = info_span!("preparing").entered();
 		info!("preparing for rollback");
-		let generation = get_current_generation(&host).await?;
+		let generation = get_current_generation(host).await?;
 		info!(
 			"rollback target would be {} {}",
 			generation.id, generation.datetime
@@ -234,7 +234,7 @@ async fn execute_upload(
 		let mut switch_script = built.clone();
 		switch_script.push("bin");
 		switch_script.push("switch-to-configuration");
-		let mut cmd = host.cmd(switch_script).await?;
+		let mut cmd = host.cmd(switch_script).in_current_span().await?;
 		cmd.arg(action.name());
 		if let Err(e) = cmd.sudo().run().in_current_span().await {
 			error!("failed to activate: {e}");
@@ -285,11 +285,9 @@ impl BuildSystems {
 		info!("building");
 		let host = config.host(&host).await?;
 		let action = Action::from(self.subcommand.clone());
-		let fleet_field = &config.fleet_field;
+		let fleet_config = &config.config_field;
 		let drv = nix_go!(
-			fleet_field.buildSystems(Obj {
-				localSystem: { config.local_system.clone() }
-			})[{ action.build_attr() }][{ &host.name }]
+			fleet_config.hosts[{ &host.name }].nixosSystem.config.system.build[{ action.build_attr() }]
 		);
 		let outputs = drv.build().await.map_err(|e| {
 			if action.build_attr() == "sdImage" {

@@ -9,7 +9,7 @@ use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use better_command::{ClonableHandler, NixHandler, Handler, NoopHandler};
+use better_command::{ClonableHandler, Handler, NixHandler, NoopHandler};
 use futures::StreamExt;
 use itertools::Itertools;
 use r2d2::{Pool, PooledConnection};
@@ -299,8 +299,11 @@ impl NixSessionInner {
 		let mut fexpr = b"builtins.toJSON (".to_vec();
 		fexpr.extend_from_slice(expr.as_ref());
 		fexpr.push(b')');
-		let v = self.execute_expression_string(fexpr).await?;
-		Ok(serde_json::from_str(&v)?)
+		let v = self
+			.execute_expression_string(fexpr)
+			.await
+			.context("string expression")?;
+		serde_json::from_str(&v).context("json parse")
 	}
 	async fn execute_expression_wrapping(
 		&mut self,
@@ -450,15 +453,26 @@ impl NixExprBuilder {
 
 #[macro_export]
 macro_rules! nix_expr_inner {
-	(Obj { $($ident:ident: $($val:tt)+),* $(,)? }) => {{
-		use $crate::better_nix_eval::NixExprBuilder;
+	//(@munch_object FIXME: value should be arbitrary nix_expr_inner input... Time to write proc-macro?
+	(@obj($o:ident) $field:ident, $($tt:tt)*) => {{
+		$o.obj_key(
+			NixExprBuilder::string(stringify!($field)),
+			NixExprBuilder::field($field),
+		);
+		nix_expr_inner!(@obj($o) $($tt)*);
+	}};
+	(@obj($o:ident) $field:ident: $v:block, $($tt:tt)*) => {{
+		$o.obj_key(
+			NixExprBuilder::string(stringify!($field)),
+			NixExprBuilder::serialized(&$v),
+		);
+		nix_expr_inner!(@obj($o) $($tt)*);
+	}};
+	(@obj($o:ident)) => {{}};
+	(Obj { $($tt:tt)* }) => {{
+		use $crate::{better_nix_eval::NixExprBuilder, nix_expr_inner};
 		let mut out = NixExprBuilder::object();
-		$(
-			out.obj_key(
-				NixExprBuilder::string(stringify!($ident)),
-				$crate::nix_expr_inner!($($val)+),
-			);
-		)*
+		nix_expr_inner!(@obj(out) $($tt)*);
 		out.end_obj();
 		out
 	}};
@@ -522,6 +536,9 @@ macro_rules! nix_go {
 		$o.push(Index::ExprApply($crate::nix_expr_inner!($($var)+)));
 		nix_go!(@o($o) $($tt)*);
 	};
+	(@o($o:ident) | $($var:tt)*) => {
+		$o.push(Index::Pipe($crate::nix_expr_inner!($($var)+)));
+	};
 	(@o($o:ident)) => {};
 	($field:ident $($tt:tt)+) => {{
 		use $crate::{nix_go, better_nix_eval::Index};
@@ -545,6 +562,7 @@ pub enum Index {
 	Apply(String),
 	Expr(NixExprBuilder),
 	ExprApply(NixExprBuilder),
+	Pipe(NixExprBuilder),
 }
 impl Index {
 	pub fn var(v: impl AsRef<str>) -> Self {
@@ -582,6 +600,9 @@ impl Display for Index {
 			Index::ExprApply(e) => {
 				write!(f, "<apply>({})", e.out)
 			}
+			Index::Pipe(e) => {
+				write!(f, "<map>({})", e.out)
+			}
 		}
 	}
 }
@@ -604,9 +625,9 @@ struct FieldInner {
 	session: NixSession,
 	value: Option<u32>,
 }
-fn context(full_path: Option<&[Index]>, query: &str) -> String {
+fn context(op: &str, full_path: Option<&[Index]>, query: &str) -> String {
 	if let Some(full_path) = &full_path {
-		format!("full path: {}", PathDisplay(full_path))
+		format!("on {op}, full path: {}", PathDisplay(full_path))
 	} else {
 		format!("query: {query:?}")
 	}
@@ -628,7 +649,7 @@ impl Field {
 			.await
 			.execute_assign(query)
 			.await
-			.with_context(|| context(None, query))?;
+			.with_context(|| context("new root", None, query))?;
 		Ok(Self(Arc::new(FieldInner {
 			full_path: None,
 			session,
@@ -686,6 +707,12 @@ impl Field {
 					query.push_str(&index);
 					query = format!("({query})");
 				}
+				Index::Pipe(v) => {
+					let index = Field::new(self.0.session.clone(), &v.out).await?;
+					used_fields.push(index.clone());
+					let index = format!("sess_field_{}", index.0.value.expect("value"));
+					query = format!("({index} {query})");
+				}
 			}
 		}
 
@@ -720,7 +747,7 @@ impl Field {
 			.await
 			.execute_expression_to_json(&query)
 			.await
-			.with_context(|| context(self.0.full_path.as_deref(), &query))
+			.with_context(|| context("as_json", self.0.full_path.as_deref(), &query))
 	}
 	pub async fn has_field(&self, name: &str) -> Result<bool> {
 		let id = self.0.value.expect("can't list root fields");
@@ -733,7 +760,7 @@ impl Field {
 			.await
 			.execute_expression_to_json(&query)
 			.await
-			.with_context(|| context(self.0.full_path.as_deref(), &query))
+			.with_context(|| context("has_field", self.0.full_path.as_deref(), &query))
 	}
 	pub async fn list_fields(&self) -> Result<Vec<String>> {
 		let id = self.0.value.expect("can't list root fields");
@@ -745,7 +772,7 @@ impl Field {
 			.await
 			.execute_expression_to_json(&query)
 			.await
-			.with_context(|| context(self.0.full_path.as_deref(), &query))
+			.with_context(|| context("list field", self.0.full_path.as_deref(), &query))
 	}
 	pub async fn type_of(&self) -> Result<String> {
 		let id = self.0.value.expect("can't list root fields");
@@ -757,7 +784,11 @@ impl Field {
 			.await
 			.execute_expression_to_json(&query)
 			.await
-			.with_context(|| context(self.0.full_path.as_deref(), &query))
+			.with_context(|| context("type_of", self.0.full_path.as_deref(), &query))
+	}
+	pub async fn import(&self) -> Result<Self> {
+		let import = Self::new(self.0.session.clone(), "import").await?;
+		Ok(nix_go!(self | import))
 	}
 	pub async fn build(&self) -> Result<HashMap<String, PathBuf>> {
 		let id = self.0.value.expect("can't use build on not-value");
@@ -773,7 +804,7 @@ impl Field {
 		ensure!(
 			!vid.is_empty(),
 			"build failed: {}",
-			context(self.0.full_path.as_deref(), &query),
+			context("build", self.0.full_path.as_deref(), &query),
 		);
 		let Some(vid) = vid.strip_prefix("This derivation produced the following outputs:\n")
 		else {

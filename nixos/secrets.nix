@@ -5,7 +5,7 @@ with lib;
 let
   sysConfig = config;
   secretType = types.submodule ({ config, ... }: {
-    config = let secretName = config._module.args.name; in rec {
+    config = let secretName = config._module.args.name; in {
       stableSecretPath = mkOptionDefault "/run/secrets/secret-stable-${secretName}";
       secretPath = mkOptionDefault "/run/secrets/secret-${config.secretHash}-${secretName}";
       secretHash = mkOptionDefault (if config.secret != null then (builtins.hashString "sha1" config.secret) else throw "secret is not defined for secret ${secretName}");
@@ -14,63 +14,74 @@ let
       publicPath = mkOptionDefault "/run/secrets/public-${config.publicHash}-${secretName}";
       publicHash = mkOptionDefault (if config.public != null then (builtins.hashString "sha1" config.public) else throw "public is not defined for secret ${secretName}");
     };
-    options = {
+    options = with types; {
+      shared = mkOption {
+        description = "Is this secret owned by this machine, or propagated from shared secrets";
+        default = false;
+      };
+
+      generator = mkOption {
+        type = nullOr unspecified;
+        description = "Derivation to evaluate for secret generation";
+        default = null;
+      };
+
       public = mkOption {
-        type = types.nullOr types.str;
+        type = nullOr str;
         description = "Secret public data";
         default = null;
       };
       secret = mkOption {
-        type = types.nullOr types.str;
+        type = nullOr str;
         description = "Encrypted secret data";
         default = null;
       };
       mode = mkOption {
-        type = types.str;
+        type = str;
         description = "Secret mode";
         default = "0440";
       };
       owner = mkOption {
-        type = types.str;
+        type = str;
         description = "Owner of the secret";
         default = "root";
       };
       group = mkOption {
-        type = types.str;
+        type = str;
         description = "Group of the secret";
         default = sysConfig.users.users.${config.owner}.group;
       };
 
       secretHash = mkOption {
-        type = types.str;
+        type = str;
         description = "Hash of .secret field";
       };
       publicHash = mkOption {
-        type = types.str;
+        type = str;
         description = "Hash of .public field";
       };
 
       stableSecretPath = mkOption {
-        type = types.str;
+        type = str;
         description = ''
           Use this, if target process supports re-reading of secret from disk,
           and doesn't needs to be restarted when secret is updated in file
         '';
       };
       secretPath = mkOption {
-        type = types.str;
+        type = str;
         description = "Path to decrypted secret, suffixed with contents hash";
       };
 
       stablePublicPath = mkOption {
-        type = types.str;
+        type = str;
         description = ''
           Use this, if target process supports re-reading of secret from disk,
           and doesn't needs to be restarted when secret is updated in file
         '';
       };
       publicPath = mkOption {
-        type = types.str;
+        type = str;
         description = "Path to the public part of secret";
       };
     };

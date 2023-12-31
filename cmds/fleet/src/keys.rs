@@ -43,9 +43,9 @@ impl Config {
 		age::ssh::Recipient::from_str(&key).map_err(|e| anyhow!("parse recipient error: {:?}", e))
 	}
 
-	pub async fn recipients(&self, hosts: &[&str]) -> Result<Vec<impl Recipient>> {
+	pub async fn recipients(&self, hosts: Vec<String>) -> Result<Vec<impl Recipient>> {
 		futures::stream::iter(hosts.iter())
-			.then(|m| self.recipient(m))
+			.then(|m| self.recipient(m.as_ref()))
 			.try_collect::<Vec<_>>()
 			.await
 	}

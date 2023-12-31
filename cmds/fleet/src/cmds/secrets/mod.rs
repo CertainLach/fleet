@@ -10,14 +10,15 @@ use clap::Parser;
 use futures::StreamExt;
 use itertools::Itertools;
 use owo_colors::OwoColorize;
+use serde::Deserialize;
 use std::{
-	collections::HashSet,
+	collections::{BTreeSet, HashSet},
 	io::{self, Cursor, Read},
 	path::PathBuf,
 };
 use tabled::{Table, Tabled};
 use tokio::fs::read_to_string;
-use tracing::{info, info_span, warn};
+use tracing::{error, info, info_span, warn, Instrument};
 
 #[derive(Parser)]
 pub enum Secret {
@@ -92,77 +93,182 @@ pub enum Secret {
 	List {},
 }
 
+#[tracing::instrument(skip(config, secret, field, prefer_identities))]
+async fn update_owner_set(
+	secret_name: &str,
+	config: &Config,
+	mut secret: FleetSharedSecret,
+	field: Field,
+	updated_set: &[String],
+	prefer_identities: &[String],
+) -> Result<FleetSharedSecret> {
+	let original_set = secret.owners.clone();
+
+	let set = original_set.iter().collect::<BTreeSet<_>>();
+	let expected_set = updated_set.iter().collect::<BTreeSet<_>>();
+
+	if set == expected_set {
+		info!("no need to update owner list, it is already correct");
+		return Ok(secret);
+	}
+
+	let should_regenerate = if set.difference(&expected_set).next().is_some() {
+		// TODO: Remove this warning for revokable secrets.
+		warn!("host was removed from secret owners, but until this host rebuild, the secret will still be stored on it.");
+		nix_go_json!(field.regenerateOnOwnerRemoved)
+	} else if expected_set.difference(&set).next().is_some() {
+		nix_go_json!(field.regenerateOnOwnerAdded)
+	} else {
+		false
+	};
+
+	if should_regenerate {
+		info!("secret is owner-dependent, will regenerate");
+		let generated = generate_shared(config, secret_name, field, updated_set.to_vec()).await?;
+		Ok(generated)
+	} else {
+		let identity_holder = if !prefer_identities.is_empty() {
+			prefer_identities
+				.iter()
+				.find(|i| original_set.iter().any(|s| s == *i))
+		} else {
+			secret.owners.first()
+		};
+		let Some(identity_holder) = identity_holder else {
+			bail!("no available holder found");
+		};
+
+		if let Some(data) = secret.secret.secret {
+			let host = config.host(identity_holder).await?;
+			let encrypted = host.reencrypt(data, updated_set.to_vec()).await?;
+			secret.secret.secret = Some(encrypted);
+		}
+
+		secret.owners = updated_set.to_vec();
+		Ok(secret)
+	}
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum GeneratorKind {
+	Impure,
+}
+
+async fn generate_impure(
+	config: &Config,
+	_display_name: &str,
+	secret: Field,
+	default_generator: Field,
+	owners: &[String],
+) -> Result<FleetSecret> {
+	let config_field = &config.config_unchecked_field;
+	let generator = nix_go!(secret.generator);
+
+	let on: String = nix_go_json!(default_generator.impureOn);
+	let call_package = nix_go!(
+		config_field.buildableSystems(Obj {
+			localSystem: { config.local_system.clone() },
+		})[{ on }]
+		.config
+		.nixpkgs
+		.resolvedPkgs
+		.callPackage
+	);
+
+	let host = config.host(&on).await?;
+
+	let generator = nix_go!(call_package(generator)(Obj {}));
+	let generator = generator.build().await?;
+	let generator = generator
+		.get("out")
+		.ok_or_else(|| anyhow!("missing generateImpure out"))?;
+	let generator = host.remote_derivation(generator).await?;
+
+	let mut recipients = String::new();
+	for owner in owners {
+		let key = config.key(owner).await?;
+		recipients.push_str(&format!("-r \"{key}\" "));
+	}
+	recipients.push_str("-e");
+
+	let out = host.mktemp_dir().await?;
+
+	let mut gen = host.cmd(generator).await?;
+	gen.env("rageArgs", recipients).env("out", &out);
+	gen.run().await.context("impure generator")?;
+
+	{
+		let marker = host.read_file_text(format!("{out}/marker")).await?;
+		ensure!(marker == "SUCCESS", "generation not succeeded");
+	}
+
+	let public = host.read_file_text(format!("{out}/public")).await.ok();
+	let secret = host.read_file_bin(format!("{out}/secret")).await.ok();
+	if let Some(secret) = &secret {
+		ensure!(
+			age::Decryptor::new(Cursor::new(&secret)).is_ok(),
+			"builder produced non-encrypted value as secret, this is highly insecure, and not allowed."
+		);
+	}
+
+	let created_at = host.read_file_value(format!("{out}/created_at")).await?;
+	let expires_at = host.read_file_value(format!("{out}/expires_at")).await.ok();
+
+	Ok(FleetSecret {
+		created_at,
+		expires_at,
+		public,
+		secret: secret.map(SecretData),
+	})
+}
+async fn generate(
+	config: &Config,
+	display_name: &str,
+	secret: Field,
+	owners: &[String],
+) -> Result<FleetSecret> {
+	let generator = nix_go!(secret.generator);
+	// Can't properly check on nix module system level
+	{
+		let gen_ty = generator.type_of().await?;
+		if gen_ty == "null" {
+			bail!("secret has no generator defined, can't automatically generate it.");
+		}
+		if gen_ty != "lambda" {
+			bail!("generator should be lambda, got {gen_ty}");
+		}
+	}
+	let default_pkgs = &config.default_pkgs;
+	let default_call_package = nix_go!(default_pkgs.callPackage);
+	// Generators provide additional information in passthru, to access
+	// passthru we should call generator, but information about where this generator is supposed to build
+	// is located in passthru... Thus evaluating generator on host.
+	//
+	// Maybe it is also possible to do some magic with __functor?
+	//
+	// I don't want to make modules always responsible for additional secret data anyway,
+	// so it should be in derivation, and not in the secret data itself.
+	let default_generator = nix_go!(default_call_package(generator)(Obj {}));
+
+	let kind: GeneratorKind = nix_go_json!(default_generator.generatorKind);
+
+	match kind {
+		GeneratorKind::Impure => {
+			generate_impure(config, display_name, secret, default_generator, owners).await
+		}
+	}
+}
 async fn generate_shared(
 	config: &Config,
 	display_name: &str,
 	secret: Field,
+	expected_owners: Vec<String>,
 ) -> Result<FleetSharedSecret> {
-	Ok(if secret.has_field("generateImpure").await? {
-		let config_field = &config.config_unchecked_field;
-		let generate = nix_go!(secret.generateImpure);
-		let owners: Vec<String> = nix_go_json!(secret.expectedOwners);
-
-		let on: String = nix_go_json!(generate.on);
-		let call_package = nix_go!(
-			config_field.buildableSystems(Obj {
-				localSystem: { config.local_system.clone() }
-			})[{ on }]
-			.config
-			.nixpkgs
-			.resolvedPkgs
-			.callPackage
-		);
-
-		let host = config.host(&on).await?;
-
-		let generator = nix_go!(call_package(generate.generator)(Obj {}));
-		let generator = generator.build().await?;
-		let generator = generator
-			.get("out")
-			.ok_or_else(|| anyhow!("missing generateImpure out"))?;
-		let generator = host.remote_derivation(generator).await?;
-
-		let mut recipients = String::new();
-		for owner in &owners {
-			let key = config.key(owner).await?;
-			recipients.push_str(&format!("-r \"{key}\" "));
-		}
-		recipients.push_str("-e");
-
-		let out = host.mktemp_dir().await?;
-
-		let mut gen = host.cmd(generator).await?;
-		gen.env("rageArgs", recipients).env("out", &out);
-		gen.run().await?;
-
-		{
-			let marker = host.read_file_text(format!("{out}/marker")).await?;
-			ensure!(marker == "SUCCESS", "generation not succeeded");
-		}
-
-		let public = host.read_file_text(format!("{out}/public")).await.ok();
-		let secret = host.read_file_bin(format!("{out}/secret")).await.ok();
-		if let Some(secret) = &secret {
-			ensure!(
-				age::Decryptor::new(Cursor::new(&secret)).is_ok(),
-				"builder produced non-encrypted value as secret, this is highly insecure"
-			);
-		}
-
-		let created_at = host.read_file_value(format!("{out}/created_at")).await?;
-		let expires_at = host.read_file_value(format!("{out}/expires_at")).await.ok();
-
-		FleetSharedSecret {
-			owners,
-			secret: FleetSecret {
-				created_at,
-				expires_at,
-				public,
-				secret: secret.map(SecretData),
-			},
-		}
-	} else {
-		bail!("no generator defined for {display_name}")
+	// let owners: Vec<String> = nix_go_json!(secret.expectedOwners);
+	Ok(FleetSharedSecret {
+		secret: generate(config, display_name, secret, &expected_owners).await?,
+		owners: expected_owners,
 	})
 }
 
@@ -270,9 +376,7 @@ impl Secret {
 					machines = shared.owners;
 				}
 
-				let recipients = config
-					.recipients(&machines.iter().map(String::as_str).collect_vec())
-					.await?;
+				let recipients = config.recipients(machines.clone()).await?;
 
 				let secret = {
 					let mut input = vec![];
@@ -362,7 +466,7 @@ impl Secret {
 				remove_machines,
 				prefer_identities,
 			} => {
-				let mut secret = config.shared_secret(&name)?;
+				let secret = config.shared_secret(&name)?;
 				if secret.secret.secret.is_none() {
 					bail!("no secret");
 				}
@@ -381,58 +485,81 @@ impl Secret {
 					return Ok(());
 				}
 
-				if target_machines == initial_machines {
-					warn!("secret owners are already correct");
-					return Ok(());
-				}
+				let config_field = &config.config_unchecked_field;
+				let config_field = nix_go!(config_field.configUnchecked);
+				let field = nix_go!(config_field.sharedSecrets[{ name }]);
 
-				let identity_holder = if !prefer_identities.is_empty() {
-					prefer_identities
-						.iter()
-						.find(|i| initial_machines.iter().any(|s| s == *i))
-				} else {
-					secret.owners.first()
-				};
-				let Some(identity_holder) = identity_holder else {
-					bail!("no available holder found");
-				};
-				let target_recipients = futures::stream::iter(&target_machines)
-					.then(|m| async { config.key(m).await })
-					.collect::<Vec<_>>()
-					.await;
-				let target_recipients =
-					target_recipients.into_iter().collect::<Result<Vec<_>>>()?;
-
-				if let Some(data) = secret.secret.secret {
-					let host = config.host(&identity_holder).await?;
-					let encrypted = host.reencrypt(data, target_recipients).await?;
-					secret.secret.secret = Some(encrypted);
-				}
-
-				secret.owners = target_machines;
-				config.replace_shared(name, secret);
+				let updated = update_owner_set(
+					&name,
+					config,
+					secret,
+					field,
+					&target_machines,
+					&prefer_identities,
+				)
+				.await?;
+				config.replace_shared(name, updated);
 			}
 			Secret::Regenerate { prefer_identities } => {
+				info!("checking for secrets to regenerate");
 				{
+					let _span = info_span!("shared").entered();
 					let expected_shared_set = config
 						.list_configured_shared()
 						.await?
 						.into_iter()
 						.collect::<HashSet<_>>();
 					let shared_set = config.list_shared().into_iter().collect::<HashSet<_>>();
-					for removed in expected_shared_set.difference(&shared_set) {
-						info!("generating secret: {removed}");
+					for missing in expected_shared_set.difference(&shared_set) {
 						let config_field = &config.config_unchecked_field;
 						let config_field = nix_go!(config_field.configUnchecked);
-						let secret = nix_go!(config_field.sharedSecrets[{ removed }]);
-						let shared = generate_shared(config, removed, secret).await?;
-						config.replace_shared(removed.to_string(), shared)
+						let secret = nix_go!(config_field.sharedSecrets[{ missing }]);
+						let expected_owners: Option<Vec<String>> =
+							nix_go_json!(secret.expectedOwners);
+						let Some(expected_owners) = expected_owners else {
+							// TODO: Might still need to regenerate
+							continue;
+						};
+						info!("generating secret: {missing}");
+						let shared = generate_shared(config, missing, secret, expected_owners)
+							.in_current_span()
+							.await?;
+						config.replace_shared(missing.to_string(), shared)
+					}
+				}
+				for host in config.list_hosts().await? {
+					let _span = info_span!("host", host = host.name).entered();
+					let expected_set = host
+						.list_configured_secrets()
+						.in_current_span()
+						.await?
+						.into_iter()
+						.collect::<HashSet<_>>();
+					let stored_set = config
+						.list_secrets(&host.name)
+						.into_iter()
+						.collect::<HashSet<_>>();
+					for missing in expected_set.difference(&stored_set) {
+						info!("generating secret: {missing}");
+						let secret = host.secret_field(missing).in_current_span().await?;
+						let generated =
+							match generate(config, missing, secret, &[host.name.clone()])
+								.in_current_span()
+								.await
+							{
+								Ok(v) => v,
+								Err(e) => {
+									error!("{e}");
+									continue;
+								}
+							};
+						config.insert_secret(&host.name, missing.to_string(), generated)
 					}
 				}
 				let mut to_remove = Vec::new();
 				for name in &config.list_shared() {
 					info!("updating secret: {name}");
-					let mut data = config.shared_secret(name)?;
+					let data = config.shared_secret(name)?;
 					let config_field = &config.config_unchecked_field;
 					let config_field = nix_go!(config_field.configUnchecked);
 					let expected_owners: Vec<String> =
@@ -442,55 +569,20 @@ impl Secret {
 						to_remove.push(name.to_string());
 						continue;
 					}
-					let set = data.owners.iter().collect::<HashSet<_>>();
-					let expected_set = expected_owners.iter().collect::<HashSet<_>>();
-					let should_remove = set.difference(&expected_set).next().is_some();
-					if set == expected_set {
-						info!("secret data is ok");
-						continue;
-					}
 
 					let secret = nix_go!(config_field.sharedSecrets[{ name }]);
-					let owner_dependent: bool = nix_go_json!(secret.ownerDependent);
-					let regenerate_on_remove: bool = nix_go_json!(secret.regenerateOnOwnerRemoved);
-					#[allow(clippy::nonminimal_bool)]
-					if !owner_dependent && !(should_remove && regenerate_on_remove) {
-						warn!("reencrypting secret '{name}' for new owner set");
-						// TODO: force regeneration
-						if should_remove {
-							warn!("secret will not be regenerated for removed machines, and until host rebuild, they will still possess the ability to decode secret");
-						}
-
-						let identity_holder = if !prefer_identities.is_empty() {
-							prefer_identities
-								.iter()
-								.find(|i| data.owners.iter().any(|s| s == *i))
-						} else {
-							data.owners.first()
-						};
-						let Some(identity_holder) = identity_holder else {
-							bail!("no available holder found");
-						};
-
-						let target_recipients = futures::stream::iter(&expected_owners)
-							.then(|m| async { config.key(m).await })
-							.collect::<Vec<_>>()
-							.await;
-						let target_recipients =
-							target_recipients.into_iter().collect::<Result<Vec<_>>>()?;
-
-						if let Some(secret) = data.secret.secret {
-							let host = config.host(identity_holder).await?;
-							let encrypted = host.reencrypt(secret, target_recipients).await?;
-
-							data.secret.secret = Some(encrypted);
-						}
-						data.owners = expected_owners;
-						config.replace_shared(name.to_owned(), data);
-					} else {
-						let shared = generate_shared(config, name, secret).await?;
-						config.replace_shared(name.to_owned(), shared)
-					}
+					config.replace_shared(
+						name.to_owned(),
+						update_owner_set(
+							&name,
+							config,
+							data,
+							secret,
+							&expected_owners,
+							&prefer_identities,
+						)
+						.await?,
+					);
 				}
 				for k in to_remove {
 					config.remove_shared(&k);

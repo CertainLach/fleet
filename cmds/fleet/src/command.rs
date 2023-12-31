@@ -1,5 +1,3 @@
-use std::thread::sleep;
-use std::time::Duration;
 use std::{ffi::OsStr, pin, process::Stdio, sync::Arc, task::Poll};
 
 use anyhow::{anyhow, Result};
@@ -9,7 +7,7 @@ use itertools::Either;
 use openssh::{OverSsh, OwningCommand, Session};
 use tokio::{io::AsyncRead, process::Command, select};
 use tokio_util::codec::{BytesCodec, FramedRead, LinesCodec};
-use tracing::{info, debug};
+use tracing::debug;
 
 fn escape_bash(input: &str, out: &mut String) {
 	const TO_ESCAPE: &str = "$ !\"#&'()*,;<>?[\\]^`{|}";
@@ -162,6 +160,10 @@ impl MyCommand {
 		self
 	}
 	pub fn sudo(mut self) -> Self {
+		// TODO: Multiple escalation strategies.
+		// Maybe escalation should be moved to ConfigHost, to also support cases
+		// when there is no sudo on remote machine, but instead we can reconnect
+		// as root using ssh?
 		if std::env::var_os("NO_SUDO").is_some() {
 			let mut out = Self::new("su");
 			out.ssh_session = self.ssh_session.take();
@@ -267,7 +269,7 @@ async fn run_nix_inner_raw(
 ) -> Result<Option<Vec<u8>>> {
 	cmd.stderr(Stdio::piped());
 	cmd.stdout(Stdio::piped());
-	debug!("running command {cmd:?} on local");
+	debug!("running command {str:?} on local");
 	let mut child = cmd.spawn()?;
 	let mut stderr = child.stderr.take().unwrap();
 	let stdout = child.stdout.take().unwrap();
@@ -328,7 +330,7 @@ async fn run_nix_inner_raw_ssh(
 	err_handler: &mut dyn Handler,
 	mut out_handler: Option<&mut dyn Handler>,
 ) -> Result<Option<Vec<u8>>> {
-	debug!("running command {cmd:?} over ssh");
+	debug!("running command {str:?} over ssh");
 	cmd.stderr(openssh::Stdio::piped());
 	cmd.stdout(openssh::Stdio::piped());
 	let mut child = cmd.spawn().await?;
