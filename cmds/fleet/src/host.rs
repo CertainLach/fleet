@@ -204,7 +204,7 @@ impl Config {
 
 	pub async fn host(&self, name: &str) -> Result<ConfigHost> {
 		let config = &self.config_unchecked_field;
-		let nixos_config = nix_go!(config.configuredSystems[{ name }].config);
+		let nixos_config = nix_go!(config.hosts[{ name }].nixosSystem.config);
 		Ok(ConfigHost {
 			config: self.clone(),
 			name: name.to_owned(),
@@ -236,9 +236,7 @@ impl Config {
 	/// Shared secrets configured in fleet.nix or in flake
 	pub async fn list_configured_shared(&self) -> Result<Vec<String>> {
 		let config_field = &self.config_unchecked_field;
-		nix_go!(config_field.configUnchecked.sharedSecrets)
-			.list_fields()
-			.await
+		nix_go!(config_field.sharedSecrets).list_fields().await
 	}
 	/// Shared secrets configured in fleet.nix
 	pub fn list_shared(&self) -> Vec<String> {
@@ -299,7 +297,7 @@ impl Config {
 	pub async fn shared_secret_expected_owners(&self, secret: &str) -> Result<Vec<String>> {
 		let config_field = &self.config_unchecked_field;
 		Ok(nix_go_json!(
-			config_field.configUnchecked.sharedSecrets[{ secret }].expectedOwners
+			config_field.sharedSecrets[{ secret }].expectedOwners
 		))
 	}
 

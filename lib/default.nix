@@ -22,7 +22,7 @@
         ++ [
           data
           ({...}: {
-            inherit globalModules hosts;
+            inherit globalModules hosts overlays;
           })
         ]
         ++ modules;
@@ -39,7 +39,6 @@
       root,
       data,
     }: {
-      configuredHosts = root.config.hosts;
       config = root.config;
     };
     defaultData = withData {
@@ -49,9 +48,9 @@
     uncheckedData = withData {inherit data root;};
   in {
     inherit nixpkgs overlays;
-    inherit (defaultData) configuredHosts configuredSystems config buildableSystems;
+    inherit (defaultData) config;
     unchecked = {
-      inherit (uncheckedData) configuredHosts configuredSystems config buildableSystems;
+      inherit (uncheckedData) config;
     };
   };
 }

@@ -167,13 +167,12 @@ async fn generate_impure(
 
 	let on: String = nix_go_json!(default_generator.impureOn);
 	let call_package = nix_go!(
-		config_field.buildableSystems(Obj {
-			localSystem: { config.local_system.clone() },
-		})[{ on }]
-		.config
-		.nixpkgs
-		.resolvedPkgs
-		.callPackage
+		config_field.hosts[{ on }]
+			.nixosSystem
+			.config
+			.nixpkgs
+			.resolvedPkgs
+			.callPackage
 	);
 
 	let host = config.host(&on).await?;
@@ -486,7 +485,6 @@ impl Secret {
 				}
 
 				let config_field = &config.config_unchecked_field;
-				let config_field = nix_go!(config_field.configUnchecked);
 				let field = nix_go!(config_field.sharedSecrets[{ name }]);
 
 				let updated = update_owner_set(
@@ -512,7 +510,6 @@ impl Secret {
 					let shared_set = config.list_shared().into_iter().collect::<HashSet<_>>();
 					for missing in expected_shared_set.difference(&shared_set) {
 						let config_field = &config.config_unchecked_field;
-						let config_field = nix_go!(config_field.configUnchecked);
 						let secret = nix_go!(config_field.sharedSecrets[{ missing }]);
 						let expected_owners: Option<Vec<String>> =
 							nix_go_json!(secret.expectedOwners);
@@ -561,7 +558,6 @@ impl Secret {
 					info!("updating secret: {name}");
 					let data = config.shared_secret(name)?;
 					let config_field = &config.config_unchecked_field;
-					let config_field = nix_go!(config_field.configUnchecked);
 					let expected_owners: Vec<String> =
 						nix_go_json!(config_field.sharedSecrets[{ name }].expectedOwners);
 					if expected_owners.is_empty() {
