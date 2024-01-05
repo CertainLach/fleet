@@ -16,6 +16,7 @@ pub struct Deploy {
 	/// Disable automatic rollback
 	#[clap(long)]
 	disable_rollback: bool,
+	/// Action to execute after system is built
 	action: DeployAction,
 }
 
@@ -45,6 +46,11 @@ impl DeployAction {
 	}
 	pub(crate) fn should_activate(&self) -> bool {
 		matches!(self, Self::Switch | Self::Test)
+	}
+	pub(crate) fn should_create_rollback_marker(&self) -> bool {
+		// Upload does nothing on the target machine, other than uploading the closure.
+		// In boot case we want to have rollback marker prepared, so that the system may rollback itself on the next boot.
+		!matches!(self, Self::Upload)
 	}
 	pub(crate) fn should_schedule_rollback_run(&self) -> bool {
 		matches!(self, Self::Switch | Self::Test)
@@ -127,7 +133,7 @@ async fn deploy_task(
 	// is scheduler on next boot (default behavior). On current boot - rollback activator will fail due to
 	// unit name conflict in systemd-run
 	// This code is tied to rollback.nix
-	if !disable_rollback {
+	if !disable_rollback && action.should_create_rollback_marker() {
 		let _span = info_span!("preparing").entered();
 		info!("preparing for rollback");
 		let generation = get_current_generation(host).await?;
@@ -193,41 +199,45 @@ async fn deploy_task(
 			failed = true;
 		}
 	}
-	if !disable_rollback {
-		if failed {
-			info!("executing rollback");
-			if let Err(e) = host
-				.systemctl_start("rollback-watchdog.service")
-				.instrument(info_span!("rollback"))
-				.await
-			{
-				error!("failed to trigger rollback: {e}")
+	if action.should_create_rollback_marker() {
+		if !disable_rollback {
+			if failed {
+				if action.should_schedule_rollback_run() {
+					info!("executing rollback");
+					if let Err(e) = host
+						.systemctl_start("rollback-watchdog.service")
+						.instrument(info_span!("rollback"))
+						.await
+					{
+						error!("failed to trigger rollback: {e}")
+					}
+				}
+			} else {
+				info!("trying to mark upgrade as successful");
+				if let Err(e) = host
+					.rm_file("/etc/fleet_rollback_marker", true)
+					.in_current_span()
+					.await
+				{
+					error!("failed to remove rollback marker. This is bad, as the system will be rolled back by watchdog: {e}")
+				}
 			}
-		} else {
-			info!("trying to mark upgrade as successful");
-			if let Err(e) = host
-				.rm_file("/etc/fleet_rollback_marker", true)
-				.in_current_span()
-				.await
-			{
-				error!("failed to remove rollback marker. This is bad, as the system will be rolled back by watchdog: {e}")
+			info!("disarming watchdog, just in case");
+			if let Err(_e) = host.systemctl_stop("rollback-watchdog.timer").await {
+				// It is ok, if there was no reboot - then timer might not be running.
 			}
-		}
-		info!("disarming watchdog, just in case");
-		if let Err(_e) = host.systemctl_stop("rollback-watchdog.timer").await {
-			// It is ok, if there was no reboot - then timer might not be running.
-		}
-		if action.should_schedule_rollback_run() {
-			if let Err(e) = host.systemctl_stop("rollback-watchdog-run.timer").await {
-				error!("failed to disarm rollback run: {e}");
+			if action.should_schedule_rollback_run() {
+				if let Err(e) = host.systemctl_stop("rollback-watchdog-run.timer").await {
+					error!("failed to disarm rollback run: {e}");
+				}
 			}
+		} else if let Err(_e) = host
+			.rm_file("/etc/fleet_rollback_marker", true)
+			.in_current_span()
+			.await
+		{
+			// Marker might not exist, yet better try to remove it.
 		}
-	} else if let Err(_e) = host
-		.rm_file("/etc/fleet_rollback_marker", true)
-		.in_current_span()
-		.await
-	{
-		// Marker might not exist, yet better try to remove it.
 	}
 	Ok(())
 }
