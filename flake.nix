@@ -29,7 +29,7 @@
         llvmPkgs = pkgs.buildPackages.llvmPackages_11;
         rust =
           (pkgs.rustChannelOf {
-            date = "2023-12-29";
+            date = "2024-01-01";
             channel = "nightly";
           })
           .default

@@ -428,6 +428,7 @@ impl NixExprBuilder {
 		self.used_fields.extend(e.used_fields);
 	}
 
+	#[allow(dead_code)]
 	pub fn session(&self) -> NixSession {
 		let mut session = None;
 		for ele in &self.used_fields {
@@ -444,6 +445,7 @@ impl NixExprBuilder {
 		}
 		session.expect("expr without fields used")
 	}
+	#[allow(dead_code)]
 	pub fn index_attr(&mut self, s: &str) {
 		let escaped = nixlike::serialize(s).expect("string");
 		self.out.push('.');
@@ -559,7 +561,9 @@ macro_rules! nix_go_json {
 pub enum Index {
 	Var(String),
 	String(String),
+	#[allow(dead_code)]
 	Apply(String),
+	#[allow(dead_code)]
 	Expr(NixExprBuilder),
 	ExprApply(NixExprBuilder),
 	Pipe(NixExprBuilder),
@@ -576,6 +580,7 @@ impl Index {
 	pub fn attr(v: impl AsRef<str>) -> Self {
 		Self::String(v.as_ref().to_owned())
 	}
+	#[allow(dead_code)]
 	pub fn apply(v: impl Serialize) -> Self {
 		let serialized = nixlike::serialize(v).expect("invalid value for apply");
 		Self::Apply(serialized.trim_end().to_owned())
@@ -749,6 +754,7 @@ impl Field {
 			.await
 			.with_context(|| context("as_json", self.0.full_path.as_deref(), &query))
 	}
+	#[allow(dead_code)]
 	pub async fn has_field(&self, name: &str) -> Result<bool> {
 		let id = self.0.value.expect("can't list root fields");
 		let key = nixlike::escape_string(name);
@@ -786,6 +792,7 @@ impl Field {
 			.await
 			.with_context(|| context("type_of", self.0.full_path.as_deref(), &query))
 	}
+	#[allow(dead_code)]
 	pub async fn import(&self) -> Result<Self> {
 		let import = Self::new(self.0.session.clone(), "import").await?;
 		Ok(nix_go!(self | import))

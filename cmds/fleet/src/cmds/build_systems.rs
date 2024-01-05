@@ -6,34 +6,40 @@ use crate::command::MyCommand;
 use crate::host::{Config, ConfigHost};
 use crate::nix_go;
 use anyhow::{anyhow, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use itertools::Itertools as _;
 use tokio::{task::LocalSet, time::sleep};
 use tracing::{error, field, info, info_span, warn, Instrument};
 
-#[derive(Parser, Clone)]
-pub struct BuildSystems {
+#[derive(Parser)]
+pub struct Deploy {
 	/// Disable automatic rollback
 	#[clap(long)]
 	disable_rollback: bool,
-	#[clap(subcommand)]
-	subcommand: Subcommand,
+	action: DeployAction,
 }
 
-enum UploadAction {
+#[derive(ValueEnum, Clone, Copy)]
+enum DeployAction {
+	/// Upload derivation, but do not execute the update.
+	Upload,
+	/// Upload and execute the activation script, old version will be used after reboot.
 	Test,
+	/// Upload and set as current system profile, but do not execute activation script.
 	Boot,
+	/// Upload, set current profile, and execute activation script.
 	Switch,
 }
-impl UploadAction {
-	fn name(&self) -> &'static str {
+
+impl DeployAction {
+	pub(crate) fn name(&self) -> Option<&'static str> {
 		match self {
-			UploadAction::Test => "test",
-			UploadAction::Boot => "boot",
-			UploadAction::Switch => "switch",
+			DeployAction::Upload => None,
+			DeployAction::Test => Some("test"),
+			DeployAction::Boot => Some("boot"),
+			DeployAction::Switch => Some("switch"),
 		}
 	}
-
 	pub(crate) fn should_switch_profile(&self) -> bool {
 		matches!(self, Self::Switch | Self::Boot)
 	}
@@ -45,66 +51,12 @@ impl UploadAction {
 	}
 }
 
-enum PackageAction {
-	SdImage,
-	InstallationCd,
-}
-impl PackageAction {
-	fn build_attr(&self) -> String {
-		match self {
-			PackageAction::SdImage => "sdImage".to_owned(),
-			PackageAction::InstallationCd => "isoImage".to_owned(),
-		}
-	}
-}
-
-enum Action {
-	Upload { action: Option<UploadAction> },
-	Package(PackageAction),
-}
-impl Action {
-	fn build_attr(&self) -> String {
-		match self {
-			Action::Upload { .. } => "toplevel".to_owned(),
-			Action::Package(p) => p.build_attr(),
-		}
-	}
-}
-
-impl From<Subcommand> for Action {
-	fn from(s: Subcommand) -> Self {
-		match s {
-			Subcommand::Upload => Self::Upload { action: None },
-			Subcommand::Test => Self::Upload {
-				action: Some(UploadAction::Test),
-			},
-			Subcommand::Boot => Self::Upload {
-				action: Some(UploadAction::Boot),
-			},
-			Subcommand::Switch => Self::Upload {
-				action: Some(UploadAction::Switch),
-			},
-			Subcommand::SdImage => Self::Package(PackageAction::SdImage),
-			Subcommand::InstallationCd => Self::Package(PackageAction::InstallationCd),
-		}
-	}
-}
-
 #[derive(Parser, Clone)]
-enum Subcommand {
-	/// Upload, but do not switch
-	Upload,
-	/// Upload + switch to built system until reboot
-	Test,
-	/// Upload + switch to built system after reboot
-	Boot,
-	/// Upload + test + boot
-	Switch,
-
-	/// Build SD .img image
-	SdImage,
-	/// Build an installation cd ISO image
-	InstallationCd,
+pub struct BuildSystems {
+	/// Attribute to build. Systems are deployed from "toplevel" attr, well-known used attributes
+	/// are "sdImage"/"isoImage", and your configuration may include any other build attributes.
+	#[clap(long, default_value = "toplevel")]
+	build_attr: String,
 }
 
 struct Generation {
@@ -163,11 +115,11 @@ async fn get_current_generation(host: &ConfigHost) -> Result<Generation> {
 	Ok(current)
 }
 
-async fn execute_upload(
-	build: &BuildSystems,
-	action: UploadAction,
+async fn deploy_task(
+	action: DeployAction,
 	host: &ConfigHost,
 	built: PathBuf,
+	disable_rollback: bool,
 ) -> Result<()> {
 	let mut failed = false;
 	// TODO: Lockfile, to prevent concurrent system switch?
@@ -175,7 +127,7 @@ async fn execute_upload(
 	// is scheduler on next boot (default behavior). On current boot - rollback activator will fail due to
 	// unit name conflict in systemd-run
 	// This code is tied to rollback.nix
-	if !build.disable_rollback {
+	if !disable_rollback {
 		let _span = info_span!("preparing").entered();
 		info!("preparing for rollback");
 		let generation = get_current_generation(host).await?;
@@ -235,13 +187,13 @@ async fn execute_upload(
 		switch_script.push("bin");
 		switch_script.push("switch-to-configuration");
 		let mut cmd = host.cmd(switch_script).in_current_span().await?;
-		cmd.arg(action.name());
+		cmd.arg(action.name().expect("upload.should_activate == false"));
 		if let Err(e) = cmd.sudo().run().in_current_span().await {
 			error!("failed to activate: {e}");
 			failed = true;
 		}
 	}
-	if !build.disable_rollback {
+	if !disable_rollback {
 		if failed {
 			info!("executing rollback");
 			if let Err(e) = host
@@ -280,97 +232,45 @@ async fn execute_upload(
 	Ok(())
 }
 
-impl BuildSystems {
-	async fn build_task(self, config: Config, host: String) -> Result<()> {
-		info!("building");
-		let host = config.host(&host).await?;
-		let action = Action::from(self.subcommand.clone());
-		let fleet_config = &config.config_field;
-		let drv = nix_go!(
-			fleet_config.hosts[{ &host.name }].nixosSystem.config.system.build[{ action.build_attr() }]
-		);
-		let outputs = drv.build().await.map_err(|e| {
-			if action.build_attr() == "sdImage" {
+async fn build_task(config: Config, host: String, build_attr: &str) -> Result<PathBuf> {
+	info!("building");
+	let host = config.host(&host).await?;
+	// let action = Action::from(self.subcommand.clone());
+	let fleet_config = &config.config_field;
+	let drv = nix_go!(
+		fleet_config.hosts[{ &host.name }]
+			.nixosSystem
+			.config
+			.system
+			.build[{ build_attr }]
+	);
+	let outputs = drv.build().await.map_err(|e| {
+			if build_attr == "sdImage" {
 				info!("sd-image build failed");
 				info!("Make sure you have imported modulesPath/installer/sd-card/sd-image-<arch>[-installer].nix (For installer, you may want to check config)");
 			}
 			e
 		})?;
-		let out_output = outputs
-			.get("out")
-			.ok_or_else(|| anyhow!("system build should produce \"out\" output"))?;
+	let out_output = outputs
+		.get("out")
+		.ok_or_else(|| anyhow!("system build should produce \"out\" output"))?;
 
-		match action {
-			Action::Upload { action } => {
-				if !config.is_local(&host.name) {
-					info!("uploading system closure");
-					{
-						// TODO: Move to remote_derivation method.
-						// Alternatively, nix store make-content-addressed can be used,
-						// at least for the first deployment, to provide trusted store key.
-						//
-						// It is much slower, yet doesn't require root on the deployer machine.
-						let mut sign = MyCommand::new("nix");
-						// Private key for host machine is registered in nix-sign.nix
-						sign.arg("store")
-							.arg("sign")
-							.comparg("--key-file", "/etc/nix/private-key")
-							.arg("-r")
-							.arg(out_output);
-						if let Err(e) = sign.sudo().run_nix().await {
-							warn!("Failed to sign store paths: {e}");
-						};
-					}
-					let mut tries = 0;
-					loop {
-						match host.remote_derivation(out_output).await {
-							Ok(remote) => {
-								assert!(&remote == out_output, "CA derivations aren't implemented");
-								break;
-							}
-							Err(e) if tries < 3 => {
-								tries += 1;
-								warn!("Copy failure ({}/3): {}", tries, e);
-								sleep(Duration::from_millis(5000)).await;
-							}
-							Err(e) => return Err(e),
-						}
-					}
-				}
-				if let Some(action) = action {
-					execute_upload(&self, action, &host, out_output.clone()).await?
-				}
-			}
-			Action::Package(PackageAction::SdImage) => {
-				let mut out = current_dir()?;
-				out.push(format!("sd-image-{}", host.name));
+	Ok(out_output.clone())
+}
 
-				info!("linking sd image to {:?}", out);
-				symlink(out_output, out)?;
-			}
-			Action::Package(PackageAction::InstallationCd) => {
-				let mut out = current_dir()?;
-				out.push(format!("installation-cd-{}", host.name));
-
-				info!("linking iso image to {:?}", out);
-				symlink(out_output, out)?;
-			}
-		};
-		Ok(())
-	}
-
+impl BuildSystems {
 	pub async fn run(self, config: &Config) -> Result<()> {
 		let hosts = config.list_hosts().await?;
 		let set = LocalSet::new();
-		let this = &self;
+		let build_attr = self.build_attr.clone();
 		for host in hosts.into_iter() {
 			if config.should_skip(&host.name) {
 				continue;
 			}
 			let config = config.clone();
-			let this = this.clone();
-			let span = info_span!("deployment", host = field::display(&host.name));
+			let span = info_span!("build", host = field::display(&host.name));
 			let hostname = host.name;
+			let build_attr = build_attr.clone();
 			// FIXME: Since the introduction of better-nix-eval,
 			// due to single repl used for builds, hosts are waiting for each other to build,
 			// instead of building concurrently.
@@ -384,11 +284,94 @@ impl BuildSystems {
 			// multiple hosts.
 			set.spawn_local(
 				(async move {
-					match this.build_task(config, hostname).await {
-						Ok(_) => {}
+					let built = match build_task(config, hostname.clone(), &build_attr).await {
+						Ok(path) => path,
 						Err(e) => {
-							error!("failed to deploy host: {}", e)
+							error!("failed to deploy host: {}", e);
+							return;
 						}
+					};
+					// TODO: Handle error
+					let mut out = current_dir().expect("cwd exists");
+					out.push(format!("built-{}", hostname));
+
+					info!("linking iso image to {:?}", out);
+					if let Err(e) = symlink(built, out) {
+						error!("failed to symlink: {e}")
+					}
+				})
+				.instrument(span),
+			);
+		}
+		set.await;
+		Ok(())
+	}
+}
+
+impl Deploy {
+	pub async fn run(self, config: &Config) -> Result<()> {
+		let hosts = config.list_hosts().await?;
+		let set = LocalSet::new();
+		for host in hosts.into_iter() {
+			if config.should_skip(&host.name) {
+				continue;
+			}
+			let config = config.clone();
+			let span = info_span!("deploy", host = field::display(&host.name));
+			let hostname = host.name.clone();
+			// FIXME: Fix repl concurrency (see build-systems)
+			set.spawn_local(
+				(async move {
+					let built = match build_task(config.clone(), hostname.clone(), "toplevel").await
+					{
+						Ok(path) => path,
+						Err(e) => {
+							error!("failed to deploy host: {}", e);
+							return;
+						}
+					};
+					if !config.is_local(&hostname) {
+						info!("uploading system closure");
+						{
+							// TODO: Move to remote_derivation method.
+							// Alternatively, nix store make-content-addressed can be used,
+							// at least for the first deployment, to provide trusted store key.
+							//
+							// It is much slower, yet doesn't require root on the deployer machine.
+							let mut sign = MyCommand::new("nix");
+							// Private key for host machine is registered in nix-sign.nix
+							sign.arg("store")
+								.arg("sign")
+								.comparg("--key-file", "/etc/nix/private-key")
+								.arg("-r")
+								.arg(&built);
+							if let Err(e) = sign.sudo().run_nix().await {
+								warn!("Failed to sign store paths: {e}");
+							};
+						}
+						let mut tries = 0;
+						loop {
+							match host.remote_derivation(&built).await {
+								Ok(remote) => {
+									assert!(remote == built, "CA derivations aren't implemented");
+									break;
+								}
+								Err(e) if tries < 3 => {
+									tries += 1;
+									warn!("copy failure ({}/3): {}", tries, e);
+									sleep(Duration::from_millis(5000)).await;
+								}
+								Err(e) => {
+									error!("upload failed: {e}");
+									return;
+								}
+							}
+						}
+					}
+					if let Err(e) =
+						deploy_task(self.action, &host, built, self.disable_rollback).await
+					{
+						error!("activation failed: {e}");
 					}
 				})
 				.instrument(span),

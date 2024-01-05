@@ -14,7 +14,6 @@ use clap::{ArgGroup, Parser};
 use openssh::SessionBuilder;
 use serde::de::DeserializeOwned;
 use tempfile::NamedTempFile;
-use tracing::instrument;
 
 use crate::{
 	better_nix_eval::{Field, NixSessionPool},
@@ -90,6 +89,7 @@ impl ConfigHost {
 		cmd.arg(path);
 		cmd.run_string().await
 	}
+	#[allow(dead_code)]
 	pub async fn read_file_json<D: DeserializeOwned>(&self, path: impl AsRef<OsStr>) -> Result<D> {
 		let text = self.read_file_text(path).await?;
 		Ok(serde_json::from_str(&text)?)

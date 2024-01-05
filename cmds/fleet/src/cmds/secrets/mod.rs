@@ -7,8 +7,6 @@ use crate::{
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::Parser;
-use futures::StreamExt;
-use itertools::Itertools;
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::{
@@ -570,7 +568,7 @@ impl Secret {
 					config.replace_shared(
 						name.to_owned(),
 						update_owner_set(
-							&name,
+							name,
 							config,
 							data,
 							secret,

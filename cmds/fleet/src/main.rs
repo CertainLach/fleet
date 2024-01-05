@@ -12,14 +12,17 @@ pub(crate) mod extra_args;
 mod fleetdata;
 
 use std::ffi::OsString;
-use std::io::{stderr, stdout, Write};
 use std::process::exit;
 use std::time::Duration;
 
 use anyhow::{bail, Result};
 use clap::Parser;
 
-use cmds::{build_systems::BuildSystems, info::Info, secrets::Secret};
+use cmds::{
+	build_systems::{BuildSystems, Deploy},
+	info::Info,
+	secrets::Secret,
+};
 use futures::future::LocalBoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::TryStreamExt;
@@ -73,6 +76,8 @@ impl Prefetch {
 enum Opts {
 	/// Prepare systems for deployments
 	BuildSystems(BuildSystems),
+
+	Deploy(Deploy),
 	/// Secret management
 	#[clap(subcommand)]
 	Secret(Secret),
@@ -94,6 +99,7 @@ struct RootOpts {
 async fn run_command(config: &Config, command: Opts) -> Result<()> {
 	match command {
 		Opts::BuildSystems(c) => c.run(config).await?,
+		Opts::Deploy(d) => d.run(config).await?,
 		Opts::Secret(s) => s.run(config).await?,
 		Opts::Info(i) => i.run(config).await?,
 		Opts::Prefetch(p) => p.run(config).await?,
