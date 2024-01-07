@@ -5,9 +5,12 @@
   nixpkgs,
   ...
 }:
-with lib; let
+with lib;
+with fleetLib; let
   hostModule = with types;
-    {...} @ hostConfig: {
+    {...} @ hostConfig: let
+      hostName = hostConfig.config._module.args.name;
+    in {
       options = {
         modules = mkOption {
           type = listOf (mkOptionType {
@@ -32,12 +35,19 @@ with lib; let
           description = "Nixos configuration";
         };
       };
-      config.nixosSystem = nixpkgs.lib.nixosSystem {
-        inherit (hostConfig.config) system modules;
-        specialArgs = {
-          inherit fleetLib;
-          fleet = fleetLib.hostsToAttrs (host: config.hosts.${host}.nixosSystem.config);
+      config = {
+        nixosSystem = nixpkgs.lib.nixosSystem {
+          inherit (hostConfig.config) system modules;
+          specialArgs = {
+            inherit fleetLib;
+            fleet = hostsToAttrs (host: config.hosts.${host}.nixosSystem.config);
+          };
         };
+        modules = [
+          ({...}: {
+            networking.hostName = mkFleetDefault hostName;
+          })
+        ];
       };
     };
   overlayType = mkOptionType {
@@ -69,7 +79,7 @@ in {
     };
   };
   config = {
-    hosts = fleetLib.hostsToAttrs (host: {
+    hosts = hostsToAttrs (host: {
       modules =
         config.globalModules
         ++ [
