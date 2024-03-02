@@ -2,9 +2,8 @@ use age::{ssh::Identity as SshIdentity, ssh::Recipient as SshRecipient, Decrypto
 use age::{Encryptor, Identity, Recipient};
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
-use log::{error, info, warn};
 use nix::sys::stat::Mode;
-use nix::unistd::{User, Group, chown};
+use nix::unistd::{chown, Group, User};
 use serde::{Deserialize, Deserializer};
 use std::fmt::{self, Display};
 use std::fs::{self, File};
@@ -14,6 +13,9 @@ use std::os::unix::prelude::PermissionsExt;
 use std::path::Path;
 use std::str::{from_utf8, FromStr};
 use std::{collections::HashMap, path::PathBuf};
+use tracing::{error, info, warn};
+use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Clone, Debug)]
 struct SecretWrapper(Vec<u8>);
@@ -228,8 +230,13 @@ fn install(data: &Path) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
-	env_logger::Builder::new()
-		.filter_level(log::LevelFilter::Info)
+	tracing_subscriber::fmt()
+		.with_env_filter(
+			EnvFilter::builder()
+				.with_default_directive(LevelFilter::INFO.into())
+				.from_env_lossy(),
+		)
+		.without_time()
 		.init();
 
 	let opts = Opts::parse();

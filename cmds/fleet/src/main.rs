@@ -11,9 +11,8 @@ pub(crate) mod extra_args;
 
 mod fleetdata;
 
-use std::ffi::OsString;
-use std::process::exit;
 use std::time::Duration;
+use std::{ffi::OsString, process::ExitCode};
 
 use anyhow::{bail, Result};
 use clap::Parser;
@@ -62,6 +61,7 @@ impl Prefetch {
 				path.push(entry.path());
 
 				let mut status = MyCommand::new("nix");
+				status.args(&config.nix_args);
 				status.arg("store").arg("prefetch-file").arg(path);
 				status.run_nix_string().instrument(span).await?;
 				Ok(())
@@ -118,7 +118,11 @@ fn setup_logging() {
 				return;
 			};
 			let pos = state.pos();
-			let _ = write!(writer, "{} / {}", pos.human_count_bare(), len.human_count_bare());
+			if pos > len {
+				let _ = write!(writer, "{}", pos.human_count_bare());
+			} else {
+				let _ = write!(writer, "{} / {}", pos.human_count_bare(), len.human_count_bare());
+			}
 		})
 		.with_key(
 			"color_start",
@@ -151,7 +155,7 @@ fn setup_logging() {
 			tracing_subscriber::fmt::layer()
 				.without_time()
 				.with_target(true)
-				.with_writer(indicatif_layer.get_stderr_writer())
+				.with_writer(indicatif_layer.get_stdout_writer())
 				.with_filter(filter), // .withou,
 		)
 		.with(indicatif_layer)
@@ -159,12 +163,15 @@ fn setup_logging() {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> ExitCode {
 	setup_logging();
 	if let Err(e) = main_real().await {
+		// If I remove this line, the next error!() line gets eaten.
+		info!("fixme: this line gets eaten by tracing-indicatif on levels info+");
 		error!("{e:#}");
-		exit(1);
+		return ExitCode::FAILURE;
 	}
+	ExitCode::SUCCESS
 }
 
 async fn main_real() -> Result<()> {

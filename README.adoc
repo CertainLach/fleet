@@ -11,3 +11,164 @@ An NixOS cluster deployment tool.
 - Modules can configure multiple hosts at once (I.e for wireguard/kubernetes installation)
 - Secrets can be securely stored in Git (No one except target hosts can decrypt them), automatically regenerated, reencrypted, etc.
 - Automatic rollback on deployment failure, which will work, as long as system is passing initrd stage (So still be carefull with root filesystem mount)
+
+== Secret generator example
+
+TODO:: This section should into some kind of fleet documentation... But as there is none, it is just left here as-is.
+
+=== Quickly run securely setup gitlab
+
+[source,nix]
+----
+{config, ...}: {
+  secrets = let ownership = { owner = "gitlab"; group = "gitlab"; }; in {
+    gitlab-initial-root = {
+      generator = {mkPassword}: mkPassword {};
+    } // ownership;
+    gitlab-secret = {
+      generator = {mkPassword}: mkPassword {};
+    } // ownership;
+    gitlab-otp = {
+      generator = {mkPassword}: mkPassword {};
+    } // ownership;
+    gitlab-db = {
+      generator = {mkPassword}: mkPassword {};
+    } // ownership;
+    gitlab-jws = {
+      generator = {mkRsa}: mkRsa {};
+    } // ownership;
+  };
+  services.gitlab = let secrets = config.secrets; in {
+    enable = true;
+    initialRootPasswordFile = secrets.gitlab-initial-root.secretPath;
+    secrets = {
+      secretFile = secrets.gitlab-secret.secretPath;
+      otpFile = secrets.gitlab-otp.secretPath;
+      dbFile = secrets.gitlab-db.secretPath;
+      jwsFile = secrets.gitlab-jws.secretPath;
+    };
+  };
+}
+----
+
+=== Securely initialize kubernetes secrets
+
+In my homelab and clusters, I almost always have some sort of HSM, and to issue new kubernetes certs I directly connect to it.
+This setup should probably split into multiple steps, where I allow target machine to generate CSR, then copy it to the HSM machine, and then sign it there... But this is just the plan.
+I want to build ansible-like script execution in fleet for this kind of tasks.
+
+[source,nix]
+----
+{...}: {
+  # First I define required secret generators:
+  nixpkgs.overlays = [
+    (final: prev: let
+      lib = final.lib;
+    in {
+      readKubernetesCa = {impureOn}:
+        final.mkImpureSecretGenerator ''
+          cd ~/ca
+
+          cert=kubernetes-intermediateCA.crt
+
+          expires_at=$(openssl x509 -in $cert -noout -enddate | cut -d= -f2 | xargs -I{} date -u -d {} +"%Y-%m-%dT%H:%M:%S.%NZ")
+          echo -n $expires_at > $out/expires_at
+
+          cat $cert > $out/public
+        ''
+        impureOn;
+      mkKubernetesCert = {
+        subj,
+        sans ? [],
+        impureOn,
+      }:
+        final.mkImpureSecretGenerator ''
+          cd ~/ca
+
+          params=$(sudo mktemp)
+          csr=$(sudo mktemp)
+          cert=$(sudo mktemp)
+          sudo openssl ecparam -genkey -name secp384r1 -out $params
+          sudo openssl req -new -key $params \
+            -subj "${lib.strings.concatStringsSep "" (lib.attrsets.mapAttrsToList (k: v: "/${k}=${v}") subj)}" \
+            ${lib.optionalString (sans != []) "-addext \"subjectAltName = ${lib.strings.concatStringsSep "," sans}\""} \
+            -out $csr
+          sudo hsms x509 -req -days 365 -in $csr -CA kubernetes-intermediateCA.crt -CAkey "pkcs11:object=[CENSORED] Kubernetes Intermediate CA;type=private" -CAcreateserial -copy_extensions copy -out $cert
+
+          expires_at=$(sudo openssl x509 -in $cert -noout -enddate | cut -d= -f2 | xargs -I{} date -u -d {} +"%Y-%m-%dT%H:%M:%S.%NZ")
+          echo -n $expires_at > $out/expires_at
+
+          sudo cat $params | encrypt > $out/secret
+          sudo cat $cert > $out/public
+        ''
+        impureOn;
+    })
+  ];
+  # Those secret generators are impure, thus they are run in system environment.
+  # Probably there needs to be a dedicated user for that kind of tasks, but this is my current setup, don't judge.
+  # I write a couple of scripts for executing openssl with HSM.
+  environment.systemPackages = [
+    pkgs.openssl.bin
+    (pkgs.writeShellApplication {
+      name = "hsms";
+      text = ''
+        set -eu
+        export OPENSSL_CONF=${openssl-conf}
+        # Yay, using secrets to generate secrets!
+        HSM_PIN=$(cat ${config.secrets.hsm-pin.secretPath})
+        exec ${pkgs.openssl}/bin/openssl "$@" -keyform=engine -CAkeyform=engine -engine=pkcs11 -passin=pass:"$HSM_PIN"
+      '';
+    })
+    (pkgs.writeShellApplication {
+      name = "hsmt";
+      text = ''
+        set -eu
+        HSM_PIN=$(cat ${config.secrets.hsm-pin.secretPath})
+        exec ${pkgs.opensc}/bin/pkcs11-tool -l --pin="$HSM_PIN" "$@"
+      '';
+    })
+  ];
+  # And finally, I have secrets, which are shared between machines.
+  # Note that this example is somewhat wrong, as this goes not into the machine configuration, but to fleet configuration.
+  sharedSecrets = {
+    "ca.pem" = {
+      # This is just the public key, no need to regenerate it to change owner list
+      regenerateOnOwnerAdded = false;
+      # For secret regeneration/reencryption, we need to specify which machines SHOULD have it.
+      expectedOwners = ["controlplane-1" "controlplane-2" "worker-1" "worker-2"];
+      generator = {readKubernetesCa}:
+        readKubernetesCa {
+          impureOn = "[CENSORED]";
+        };
+    };
+    "kube-admin.pem" = {
+      regenerateOnOwnerAdded = false;
+      expectedOwners = ["cluster-admin"];
+      generator = {mkKubernetesCert}:
+        mkKubernetesCert {
+          subj = {
+            CN = "admin";
+            O = "system:masters";
+          };
+          impureOn = "[CENSORED]";
+        };
+    };
+    "kube-apiserver.pem" = {
+      # This secret depends on machine SANS, so if owner list has been changed, then we need to regenerate it.
+      # However, SANS dependency is in fact handled by secret seed, and secret is regenerated if the seed is changed...
+      #
+      # In this case regeneration is added as a half-assed security measure, as if apiserver is removed, we don't
+      # want for it to be able to pretend like it is a valid server.
+      #
+      # However, certificate revokation is complicated in my setup, and I can't show it here.
+      regenerateOnOwnerAdded = true;
+      expectedOwners = ["controlplane-1" "controlplane-2"];
+      generator = {mkKubernetesCert}:
+        mkKubernetesCert {
+          inherit sans;
+          subj.CN = "kubernetes";
+          impureOn = "[CENSORED]";
+        };
+    };
+}
+----

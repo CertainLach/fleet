@@ -29,7 +29,7 @@
         llvmPkgs = pkgs.buildPackages.llvmPackages_11;
         rust =
           (pkgs.rustChannelOf {
-            date = "2024-01-01";
+            date = "2024-02-10";
             channel = "nightly";
           })
           .default
@@ -38,12 +38,14 @@
         packages = (import ./pkgs) pkgs pkgs;
         devShell = (pkgs.mkShell.override {stdenv = llvmPkgs.stdenv;}) {
           nativeBuildInputs = with pkgs; [
+            alejandra
             rust
             lld
             cargo-edit
             cargo-udeps
             cargo-fuzz
             cargo-watch
+            cargo-outdated
 
             pkg-config
             openssl
