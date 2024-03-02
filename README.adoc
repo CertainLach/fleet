@@ -12,6 +12,101 @@ An NixOS cluster deployment tool.
 - Secrets can be securely stored in Git (No one except target hosts can decrypt them), automatically regenerated, reencrypted, etc.
 - Automatic rollback on deployment failure, which will work, as long as system is passing initrd stage (So still be carefull with root filesystem mount)
 
+== Flake example
+
+{
+  description = "My cluster configuration";
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs";
+    fleet = {
+      url = "github:CertainLach/fleet";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    lanzaboote = {
+      url = "github:nix-community/lanzaboote/v0.3.0";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+  outputs = {
+    nixpkgs,
+    fleet,
+    lanzaboote,
+    ...
+  }: {
+    # TODO: This section of documentation needs to use flake-utils.
+    formatter.x86_64-linux = let
+      pkgs = import nixpkgs {system = "x86_64-linux";};
+    in
+      pkgs.alejandra;
+
+    devShell.x86_64-linux = let
+      pkgs = import nixpkgs {
+        system = "x86_64-linux";
+      };
+    in
+      pkgs.mkShell {
+        buildInputs = with pkgs; [
+          fleet.packages.x86_64-linux.fleet
+        ];
+      };
+
+    # Single flake may contain multiple fleet configurations, default one is called... `default`
+    fleetConfigurations.default = fleet.lib.fleetConfiguration {
+      # nixpkgs used to build the systems
+      inherit nixpkgs;
+      # fleet wants to pass some data, like secrets, to do that - fleet writes all the encrypted secrets to fleet.nix
+      # treat the contents of this file as implementation detail
+      data = import ./fleet.nix;
+      
+      # globalModules section of fleet config declares modules, which are used for all configured nixos hosts.
+      globalModules = [
+        lanzaboote.nixosModules.lanzaboote
+        ({
+          config,
+          lib,
+          ...
+        }: {
+          # Make `nix shell nixpkgs#thing` use the same nixpkgs, as used to build the system.
+          nix.registry.nixpkgs = {
+            from = { id = "nixpkgs"; type = "indirect"; };
+            flake = nixpkgs;
+            exact = false;
+          };
+        })
+      ];
+
+      # Those modules are used to configure all the machines in cluster at the same time, good example of global modules
+      # Is I.e wiring up the mesh VPN, or deploying kubernetes, or other things.
+      #
+      # Modules use the same semantics as standard nixos module system, they are just configuring all the hosts at once.
+      modules = [
+        ./wireguard
+        # Multi-instancible modules example
+        (import ./kubernetes {hosts = ["a" "b"];})
+        (import ./kubernetes {hosts = ["c" "d"];})
+      ];
+
+      # Hosts attribute (may also be defined/extended using modules attribute) configures hosts...
+      hosts.controlplane-1 = {
+        # Every host has some system, for which the system configuration needs to be built
+        system = "x86_64-linux";
+        # And nixos modules
+        modules = [
+          ./controlplane-1/hardware-configuration.nix
+          ./controlplane-1/configuration.nix
+          # Configuration may also be specified inline, as in any nixos config.
+          ({...}: {
+            services.ray = {
+              gpus = 4;
+              cpus = 128;
+            };
+          })
+        ];
+      };
+    };
+  };
+}
+
 == Secret generator example
 
 TODO:: This section should into some kind of fleet documentation... But as there is none, it is just left here as-is.
