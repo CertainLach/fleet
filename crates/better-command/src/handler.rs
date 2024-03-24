@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
-use tracing::{Span, info, warn, info_span};
+use tracing::{info, info_span, warn, Span};
+#[cfg(feature = "indicatif")]
 use tracing_indicatif::span_ext::IndicatifSpanExt as _;
 
 pub trait Handler: Send {
@@ -141,6 +142,7 @@ impl Handler for NixHandler {
 						}
 						info!(target: "nix","building {}", drv);
 						let span = info_span!("build", drv);
+						#[cfg(feature = "indicatif")]
 						span.pb_start();
 						self.spans.insert(id, span);
 					} else {
@@ -167,6 +169,7 @@ impl Handler for NixHandler {
 						}
 						info!(target: "nix","copying {} {} -> {}", drv, from, to);
 						let span = info_span!("copy", from, to, drv);
+						#[cfg(feature = "indicatif")]
 						span.pb_start();
 						self.spans.insert(id, span);
 					} else {
@@ -183,8 +186,11 @@ impl Handler for NixHandler {
 						&& !(text.starts_with("copying '") && text.ends_with("' to the store"))
 					{
 						let span = info_span!("job");
-						span.pb_start();
-						span.pb_set_message(&process_message(text.trim()));
+						#[cfg(feature = "indicatif")]
+						{
+							span.pb_start();
+							span.pb_set_message(&process_message(text.trim()));
+						}
 						self.spans.insert(id, span);
 						info!(target: "nix", "{}", text);
 					}
@@ -254,6 +260,7 @@ impl Handler for NixHandler {
 						}
 					}
 					let span = info_span!("waiting on drv", drv);
+					#[cfg(feature = "indicatif")]
 					span.pb_start();
 					self.spans.insert(id, span);
 					// Concurrent build of the same message
@@ -264,7 +271,10 @@ impl Handler for NixHandler {
 				NixLog::Result { fields, id, typ } if typ == 101 && !fields.is_empty() => {
 					if let Some(span) = self.spans.get(&id) {
 						if let LogField::String(s) = &fields[0] {
+							#[cfg(feature = "indicatif")]
 							span.pb_set_message(&process_message(s.trim()));
+							#[cfg(not(feature = "indicatif"))]
+							info!("{}", process_message(s));
 						} else {
 							warn!("bad fields: {fields:?}");
 						}
@@ -278,8 +288,12 @@ impl Handler for NixHandler {
 						if let [LogField::Num(done), LogField::Num(expected), LogField::Num(_running), LogField::Num(_failed)] =
 							&fields[..4]
 						{
-							span.pb_set_length(*expected);
-							span.pb_set_position(*done);
+							#[cfg(feature = "indicatif")]
+							{
+								span.pb_set_length(*expected);
+								span.pb_set_position(*done);
+							}
+							let _ = (span, done, expected);
 						} else {
 							warn!("bad fields: {fields:?}");
 						}

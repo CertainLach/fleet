@@ -34,6 +34,9 @@ with nixpkgs.lib; rec {
     then "${this}-${other}"
     else "${other}-${this}";
 
-  # For places, where fleet knows better than nixpkgs defaults
+  # mkDefault = mkOverride 1000
+  # For places, where fleet knows better than nixpkgs defaults.
   mkFleetDefault = mkOverride 999;
+  # Some generators use mkDefault, but optionDefault is set by nixpkgs.
+  mkFleetGeneratorDefault = mkOverride 1001;
 }

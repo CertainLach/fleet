@@ -34,9 +34,14 @@ with fleetLib; let
           type = unspecified;
           description = "Nixos configuration";
         };
+        nixpkgs = mkOption {
+          type = unspecified;
+          description = "Nixpkgs override";
+          default = nixpkgs;
+        };
       };
       config = {
-        nixosSystem = nixpkgs.lib.nixosSystem {
+        nixosSystem = hostConfig.config.nixpkgs.lib.nixosSystem {
           inherit (hostConfig.config) system modules;
           specialArgs = {
             inherit fleetLib;
@@ -45,7 +50,7 @@ with fleetLib; let
         };
         modules = [
           ({...}: {
-            networking.hostName = mkFleetDefault hostName;
+            networking.hostName = mkFleetGeneratorDefault hostName;
           })
         ];
       };

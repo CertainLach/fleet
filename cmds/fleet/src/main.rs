@@ -26,10 +26,13 @@ use futures::future::LocalBoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::TryStreamExt;
 use host::{Config, FleetOpts};
+#[cfg(feature = "indicatif")]
 use human_repr::HumanCount;
+#[cfg(feature = "indicatif")]
 use indicatif::{ProgressState, ProgressStyle};
 use tracing::{error, info};
 use tracing::{info_span, Instrument};
+#[cfg(feature = "indicatif")]
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -108,6 +111,7 @@ async fn run_command(config: &Config, command: Opts) -> Result<()> {
 }
 
 fn setup_logging() {
+	#[cfg(feature = "indicatif")]
 	let indicatif_layer = IndicatifLayer::new().with_progress_style(
 		ProgressStyle::with_template(
 			"{color_start}{span_child_prefix} {span_name}{{{span_fields}}}{color_end} {wide_msg} {color_start}{download_progress} {elapsed}{color_end}",
@@ -127,6 +131,7 @@ fn setup_logging() {
 		.with_key(
 			"color_start",
 			|state: &ProgressState, writer: &mut dyn std::fmt::Write| {
+				use std::time::Duration;
 				let elapsed = state.elapsed();
 
 				if elapsed > Duration::from_secs(60) {
@@ -150,16 +155,18 @@ fn setup_logging() {
 
 	let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-	tracing_subscriber::registry()
-		.with(
-			tracing_subscriber::fmt::layer()
-				.without_time()
-				.with_target(true)
-				.with_writer(indicatif_layer.get_stdout_writer())
-				.with_filter(filter), // .withou,
-		)
-		.with(indicatif_layer)
-		.init();
+	let reg = tracing_subscriber::registry().with({
+		let sub = tracing_subscriber::fmt::layer()
+			.without_time()
+			.with_target(true);
+		#[cfg(feature = "indicatif")]
+		let sub = sub.with_writer(indicatif_layer.get_stdout_writer());
+		sub.with_filter(filter) // .withou,
+	});
+	// #[cfg(feature = "indicatif")]
+	#[cfg(feature = "indicatif")]
+	let reg = reg.with(indicatif_layer);
+	reg.init();
 }
 
 #[tokio::main]

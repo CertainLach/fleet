@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 age = { version = "0.10.0", features = ["ssh"] }
 anyhow = "1.0.79"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing = "0.1"
 nix = {version = "0.27.1", features = ["user", "fs"]}
 serde = { version = "1.0.196", features = ["derive"] }
