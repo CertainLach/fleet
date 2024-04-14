@@ -10,11 +10,14 @@
     hosts,
     modules,
     globalModules ? [],
+    extraFleetLib ? {},
   }: let
     hostNames = nixpkgs.lib.attrNames hosts;
-    fleetLib = import ./fleetLib.nix {
-      inherit nixpkgs hostNames;
-    };
+    fleetLib =
+      (import ./fleetLib.nix {
+        inherit nixpkgs hostNames;
+      })
+      // extraFleetLib;
   in let
     root = nixpkgs.lib.evalModules {
       modules =

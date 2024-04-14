@@ -11,7 +11,6 @@ pub(crate) mod extra_args;
 
 mod fleetdata;
 
-use std::time::Duration;
 use std::{ffi::OsString, process::ExitCode};
 
 use anyhow::{bail, Result};
@@ -158,7 +157,7 @@ fn setup_logging() {
 	let reg = tracing_subscriber::registry().with({
 		let sub = tracing_subscriber::fmt::layer()
 			.without_time()
-			.with_target(true);
+			.with_target(false);
 		#[cfg(feature = "indicatif")]
 		let sub = sub.with_writer(indicatif_layer.get_stdout_writer());
 		sub.with_filter(filter) // .withou,

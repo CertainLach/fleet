@@ -39,4 +39,32 @@ with nixpkgs.lib; rec {
   mkFleetDefault = mkOverride 999;
   # Some generators use mkDefault, but optionDefault is set by nixpkgs.
   mkFleetGeneratorDefault = mkOverride 1001;
+
+  mkPassword = {size ? 32}: {
+    coreutils,
+    encrypt,
+    mkSecretGenerator,
+  }:
+    mkSecretGenerator {
+      script = ''
+        ${coreutils}/bin/tr -dc 'A-Za-z0-9!?%=' < /dev/random \
+          | ${coreutils}/bin/head -c ${toString size} \
+          | ${encrypt} > $out/secret
+      '';
+    };
+
+  mkRsa = {size ? 4096}: {
+    openssl,
+    encrypt,
+    mkSecretGenerator,
+  }:
+    mkSecretGenerator {
+      script = ''
+        ${openssl}/bin/openssl genrsa -out rsa_private.key ${toString size}
+        ${openssl}/bin/openssl rsa -in rsa_private.key -pubout -out rsa_public.key
+
+        sudo cat rsa_private.key | ${encrypt} > $out/secret
+        sudo cat rsa_public.key > $out/public
+      '';
+    };
 }

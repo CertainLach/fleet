@@ -274,7 +274,10 @@ impl Handler for NixHandler {
 							#[cfg(feature = "indicatif")]
 							span.pb_set_message(&process_message(s.trim()));
 							#[cfg(not(feature = "indicatif"))]
-							info!("{}", process_message(s));
+							{
+								let _span = span.enter();
+								info!("{}", process_message(s));
+							}
 						} else {
 							warn!("bad fields: {fields:?}");
 						}

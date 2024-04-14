@@ -1,6 +1,7 @@
 [workspace]
 members = ["crates/*", "cmds/*"]
 resolver = "2"
+package.version = "0.1.0"
 
 [workspace.dependencies]
 nixlike = { path = "./crates/nixlike" }

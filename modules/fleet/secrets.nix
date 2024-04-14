@@ -8,6 +8,13 @@ with lib;
 with fleetLib; let
   sharedSecret = with types; ({config, ...}: {
     options = {
+      managed = mkOption {
+        type = bool;
+        description = ''
+          Is this secret managed by configuration (I.e will work with reencrypt/etc), or it is configured by user
+        '';
+      };
+
       expectedOwners = mkOption {
         type = nullOr (listOf str);
         description = ''
@@ -146,77 +153,81 @@ in {
     overlays = [
       (final: prev: let
         lib = final.lib;
+        inherit (lib) strings;
+        inherit (strings) escapeShellArgs;
       in {
-        mkPassword = {size ? 32}:
-          final.mkSecretGenerator ''
-            ${final.coreutils}/bin/tr -dc 'A-Za-z0-9!?%=' < /dev/random \
-              | ${final.coreutils}/bin/head -c ${toString size} \
-              | encrypt > $out/secret
-          '';
-        mkRsa = {size ? 4096}:
-          final.mkSecretGenerator ''
-            ${final.openssl}/bin/openssl genrsa -out rsa_private.key ${toString size}
-            ${final.openssl}/bin/openssl rsa -in rsa_private.key -pubout -out rsa_public.key
-
-            sudo cat rsa_private.key | encrypt > $out/secret
-            sudo cat rsa_public.key > $out/public
+        mkEncryptSecret = {
+          rage ? prev.rage,
+          recipients,
+        }:
+          prev.writeShellScript "encryptor" ''
+            #!/bin/sh
+            exec ${rage}/bin/rage ${escapeShellArgs recipients} -e "$@"
           '';
         # TODO: Move to fleet
         # TODO: Merge both generators to one with consistent options syntax?
         # Impure generator is built on local machine, then built closure is copied to remote machine,
         # and then it is ran in inpure context, so that this generator may access HSMs and other things.
-        mkImpureSecretGenerator = generatorText: machine:
+        mkImpureSecretGenerator = {
+          script,
+          # If set - script will be run on remote machine, otherwise it will be run with fleet project in CWD
+          # (Some secrets-encryption-in-git/managed PKI solution is expected)
+          impureOn ? null,
+        }:
           (prev.writeShellScript "impureGenerator.sh" ''
             #!/bin/sh
             set -eu
-
-            # TODO: Provide encryption function as script passed to `callPackage generator {encrypt = ...;}`
-            function encrypt() {
-              eval ${final.rage}/bin/rage $rageArgs
-            }
+            cd /var/empty
 
             created_at=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+
+            ${script}
+
+            if ! test -d $out; then
+              echo "impure generator script did not produce expected \$out output"
+              exit 1
+            fi
+
             echo -n $created_at > $out/created_at
-
-            ${generatorText}
-
             echo -n SUCCESS > $out/marker
           '')
           .overrideAttrs (old: {
             passthru = {
+              inherit impureOn;
               generatorKind = "impure";
-              impureOn = machine;
             };
           });
+        # Pure generators are disabled for now
+        mkSecretGenerator = {script}: final.mkImpureSecretGenerator {inherit script;};
+
         # TODO: Implement consistent naming
         # Pure secret generator is supposed to be run entirely by nix, using `__impure` derivation type...
         # But for now, it is ran the same way as `impureSecretGenerator`, but on the local machine.
-        mkSecretGenerator = generatorText:
-          (prev.writeShellScript "generator.sh" ''
-            #!/bin/sh
-            set -eu
-            # TODO: User should create output directory by themselves.
-            cd $out
-
-            # TODO: Provide encryption function as script passed to `callPackage generator {encrypt = ...;}`
-            function encrypt() {
-              eval ${final.rage}/bin/rage $rageArgs
-            }
-
-            created_at=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
-            echo -n $created_at > $out/created_at
-
-            ${generatorText}
-
-            echo -n SUCCESS > $out/marker
-          '')
-          .overrideAttrs (old: {
-            passthru = {
-              generatorKind = "pure";
-            };
-            # TODO: make nix daemon build secret, not just the script.
-            # __impure = true;
-          });
+        # mkSecretGenerator = {script}:
+        #   (prev.writeShellScript "generator.sh" ''
+        #     #!/bin/sh
+        #     set -eu
+        #     # TODO: make nix daemon build secret, not just the script.
+        #     cd /var/empty
+        #
+        #     created_at=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+        #
+        #     ${script}
+        #     if ! test -d $out; then
+        #       echo "impure generator script did not produce expected \$out output"
+        #       exit 1
+        #     fi
+        #
+        #     echo -n $created_at > $out/created_at
+        #     echo -n SUCCESS > $out/marker
+        #   '')
+        #   .overrideAttrs (old: {
+        #     passthru = {
+        #       generatorKind = "pure";
+        #     };
+        #     # TODO: make nix daemon build secret, not just the script.
+        #     # __impure = true;
+        #   });
       })
     ];
   };

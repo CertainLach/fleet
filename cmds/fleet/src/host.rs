@@ -54,7 +54,7 @@ pub struct ConfigHost {
 	pub local: bool,
 	pub session: OnceLock<Arc<openssh::Session>>,
 
-	pub nixos_config: Field,
+	pub nixos_config: Option<Field>,
 }
 impl ConfigHost {
 	async fn open_session(&self) -> Result<Arc<openssh::Session>> {
@@ -169,7 +169,9 @@ impl ConfigHost {
 	}
 
 	pub async fn list_configured_secrets(&self) -> Result<Vec<String>> {
-		let nixos = &self.nixos_config;
+		let Some(nixos) = &self.nixos_config else {
+			return Ok(vec![]);
+		};
 		let secrets = nix_go!(nixos.secrets);
 		let mut out = Vec::new();
 		for name in secrets.list_fields().await? {
@@ -183,8 +185,18 @@ impl ConfigHost {
 		Ok(out)
 	}
 	pub async fn secret_field(&self, name: &str) -> Result<Field> {
-		let nixos = &self.nixos_config;
+		let Some(nixos) = &self.nixos_config else {
+			bail!("host is virtual and has no secrets");
+		};
 		Ok(nix_go!(nixos.secrets[{ name }]))
+	}
+
+	/// Packages for this host, resolved with nixpkgs overlays
+	pub async fn pkgs(&self) -> Result<Field> {
+		let Some(nixos) = &self.nixos_config else {
+			return Ok(self.config.default_pkgs.clone());
+		};
+		Ok(nix_go!(nixos.nixpkgs.resolvedPkgs))
 	}
 }
 
@@ -202,6 +214,16 @@ impl Config {
 		self.opts.localhost.as_ref().map(|s| s as &str) == Some(host)
 	}
 
+	pub fn local_host(&self) -> ConfigHost {
+		ConfigHost {
+			config: self.clone(),
+			name: "<virtual localhost>".to_owned(),
+			local: true,
+			session: OnceLock::new(),
+			nixos_config: None,
+		}
+	}
+
 	pub async fn host(&self, name: &str) -> Result<ConfigHost> {
 		let config = &self.config_unchecked_field;
 		let nixos_config = nix_go!(config.hosts[{ name }].nixosSystem.config);
@@ -210,7 +232,7 @@ impl Config {
 			name: name.to_owned(),
 			local: self.is_local(name),
 			session: OnceLock::new(),
-			nixos_config,
+			nixos_config: Some(nixos_config),
 		})
 	}
 	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {

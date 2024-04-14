@@ -1,5 +1,5 @@
 mod handler;
-pub use handler::{Handler, PlainHandler, NoopHandler, NixHandler, ClonableHandler};
+pub use handler::{ClonableHandler, Handler, NixHandler, NoopHandler, PlainHandler};
 
 pub fn add(left: usize, right: usize) -> usize {
 	left + right

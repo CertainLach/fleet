@@ -13,7 +13,7 @@ use std::os::unix::prelude::PermissionsExt;
 use std::path::Path;
 use std::str::{from_utf8, FromStr};
 use std::{collections::HashMap, path::PathBuf};
-use tracing::{error, info, warn};
+use tracing::{error, info, info_span, warn};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
@@ -213,12 +213,9 @@ fn install(data: &Path) -> anyhow::Result<()> {
 
 	let mut failed = false;
 	for (name, value) in data {
-		info!("initializing secret {name}");
+		let _span = info_span!("init", name = name);
 		if let Err(e) = init_secret(&identity, value) {
-			error!(
-				"{:?}",
-				e.context(format!("failed to initialize secret {}", name))
-			);
+			error!("{e}");
 			failed = true;
 		}
 	}
@@ -237,6 +234,7 @@ fn main() -> anyhow::Result<()> {
 				.from_env_lossy(),
 		)
 		.without_time()
+		.with_target(false)
 		.init();
 
 	let opts = Opts::parse();
