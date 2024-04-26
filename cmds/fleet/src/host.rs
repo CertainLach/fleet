@@ -385,7 +385,7 @@ impl FleetOpts {
 		let config_unchecked_field = nix_go!(fleet_field.unchecked.config);
 
 		let import = nix_go!(builtins_field.import);
-		let overlays = nix_go!(fleet_field.overlays);
+		let overlays = nix_go!(config_unchecked_field.overlays);
 		let nixpkgs = nix_go!(fleet_field.nixpkgs | import);
 
 		let default_pkgs = nix_go!(nixpkgs(Obj {

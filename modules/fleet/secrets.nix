@@ -153,7 +153,7 @@ in {
     overlays = [
       (final: prev: let
         lib = final.lib;
-        inherit (lib) strings;
+        inherit (lib) strings concatMap;
         inherit (strings) escapeShellArgs;
       in {
         mkEncryptSecret = {
@@ -162,7 +162,7 @@ in {
         }:
           prev.writeShellScript "encryptor" ''
             #!/bin/sh
-            exec ${rage}/bin/rage ${escapeShellArgs recipients} -e "$@"
+            exec ${rage}/bin/rage ${escapeShellArgs (concatMap (r: ["-r" r]) recipients)} -e "$@"
           '';
         # TODO: Move to fleet
         # TODO: Merge both generators to one with consistent options syntax?
@@ -177,7 +177,11 @@ in {
           (prev.writeShellScript "impureGenerator.sh" ''
             #!/bin/sh
             set -eu
-            cd /var/empty
+
+            # TODO: Provide tempdir from outside, to make it securely erasurable as needed?
+            tmp=$(mktemp -d)
+            cd $tmp
+            # cd /var/empty
 
             created_at=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
 

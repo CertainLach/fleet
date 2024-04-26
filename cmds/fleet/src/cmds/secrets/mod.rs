@@ -6,16 +6,20 @@ use crate::{
 };
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use chrono::{DateTime, Utc};
-use clap::Parser;
+use clap::{error::ErrorKind, Parser};
+use crossterm::{terminal, tty::IsTty};
+use itertools::Itertools;
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::{
 	collections::{BTreeSet, HashSet},
-	io::{self, Cursor, Read},
+	ffi::OsString,
+	io::{self, stdin, Cursor, Read, Write},
 	path::PathBuf,
 };
 use tabled::{Table, Tabled};
-use tokio::fs::read_to_string;
+use tempfile::NamedTempFile;
+use tokio::{fs::read_to_string, process::Command};
 use tracing::{error, info, info_span, warn, Instrument};
 
 #[derive(Parser)]
@@ -586,7 +590,7 @@ impl Secret {
 							{
 								Ok(v) => v,
 								Err(e) => {
-									error!("{e}");
+									error!("{e:?}");
 									continue;
 								}
 							};
