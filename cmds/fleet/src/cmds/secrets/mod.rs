@@ -201,7 +201,7 @@ async fn generate_impure(
 
 	let generator = nix_go!(call_package(generator)(Obj {
 		encrypt,
-		rustfmt_please_newline: { true },
+		// rustfmt_please_newline
 	}));
 
 	let generator = generator.build().await?;
@@ -278,7 +278,10 @@ async fn generate(
 	//
 	// I don't want to make modules always responsible for additional secret data anyway,
 	// so it should be in derivation, and not in the secret data itself.
-	let default_generator = nix_go!(default_call_package(generator)(Obj {}));
+	let default_generator = nix_go!(default_call_package(generator)(Obj {
+		encrypt: { "exit 1" },
+		// rustfmt_please_newline
+	}));
 
 	let kind: GeneratorKind = nix_go_json!(default_generator.generatorKind);
 
