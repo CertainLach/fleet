@@ -12,12 +12,12 @@ with fleetLib; let
       hostName = hostConfig.config._module.args.name;
     in {
       options = {
-        modules = mkOption {
+        nixosModules = mkOption {
           type = listOf (mkOptionType {
             name = "submodule";
             inherit (submodule {}) check;
             merge = lib.options.mergeOneOption;
-            description = "Nixos modules";
+            description = "Nixos module";
           });
           description = "List of nixos modules";
           default = [];
@@ -42,13 +42,14 @@ with fleetLib; let
       };
       config = {
         nixosSystem = hostConfig.config.nixpkgs.lib.nixosSystem {
-          inherit (hostConfig.config) system modules;
+          inherit (hostConfig.config) system;
+          modules = hostConfig.config.nixosModules;
           specialArgs = {
             inherit fleetLib;
             fleet = hostsToAttrs (host: config.hosts.${host}.nixosSystem.config);
           };
         };
-        modules = [
+        nixosModules = [
           ({...}: {
             networking.hostName = mkFleetGeneratorDefault hostName;
           })
@@ -68,7 +69,7 @@ in {
       default = {};
       description = "Configurations of individual hosts";
     };
-    globalModules = mkOption {
+    nixosModules = mkOption {
       type = listOf (mkOptionType {
         name = "submodule";
         inherit (submodule {}) check;
@@ -85,14 +86,14 @@ in {
   };
   config = {
     hosts = hostsToAttrs (host: {
-      modules =
-        config.globalModules
+      nixosModules =
+        config.nixosModules
         ++ [
           ({...}: {
             nixpkgs.overlays = config.overlays;
           })
         ];
     });
-    globalModules = import ../../nixos/modules/module-list.nix;
+    nixosModules = import ../../nixos/modules/module-list.nix;
   };
 }

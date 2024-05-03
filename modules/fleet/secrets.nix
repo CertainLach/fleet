@@ -133,7 +133,7 @@ in {
       })
       config.sharedSecrets;
     hosts = hostsToAttrs (host: {
-      modules = let
+      nixosModules = let
         cleanupSecret = secretName: v: {
           inherit (v) public secret;
           shared = true;

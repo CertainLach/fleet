@@ -60,8 +60,8 @@ An NixOS cluster deployment tool.
       # treat the contents of this file as implementation detail
       data = import ./fleet.nix;
       
-      # globalModules section of fleet config declares modules, which are used for all configured nixos hosts.
-      globalModules = [
+      # nixosModules section of fleet config declares modules, which are used for all configured nixos hosts.
+      nixosModules = [
         lanzaboote.nixosModules.lanzaboote
         ({
           config,
@@ -81,7 +81,7 @@ An NixOS cluster deployment tool.
       # Is I.e wiring up the mesh VPN, or deploying kubernetes, or other things.
       #
       # Modules use the same semantics as standard nixos module system, they are just configuring all the hosts at once.
-      modules = [
+      fleetModules = [
         ./wireguard
         # Multi-instancible modules example
         (import ./kubernetes {hosts = ["a" "b"];})
@@ -93,7 +93,7 @@ An NixOS cluster deployment tool.
         # Every host has some system, for which the system configuration needs to be built
         system = "x86_64-linux";
         # And nixos modules
-        modules = [
+        nixosModules = [
           ./controlplane-1/hardware-configuration.nix
           ./controlplane-1/configuration.nix
           # Configuration may also be specified inline, as in any nixos config.

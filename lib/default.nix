@@ -8,8 +8,8 @@
     nixpkgs,
     overlays ? [],
     hosts,
-    modules,
-    globalModules ? [],
+    fleetModules,
+    nixosModules ? [],
     extraFleetLib ? {},
   }: let
     hostNames = nixpkgs.lib.attrNames hosts;
@@ -25,10 +25,10 @@
         ++ [
           data
           ({...}: {
-            inherit globalModules hosts overlays;
+            inherit nixosModules hosts overlays;
           })
         ]
-        ++ modules;
+        ++ fleetModules;
       specialArgs = {
         inherit nixpkgs fleetLib;
       };
