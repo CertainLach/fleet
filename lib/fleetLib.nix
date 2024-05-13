@@ -47,6 +47,8 @@ with nixpkgs.lib; rec {
   }:
     mkSecretGenerator {
       script = ''
+        mkdir $out
+
         ${coreutils}/bin/tr -dc 'A-Za-z0-9!?%=' < /dev/random \
           | ${coreutils}/bin/head -c ${toString size} \
           | ${encrypt} > $out/secret
@@ -60,6 +62,8 @@ with nixpkgs.lib; rec {
   }:
     mkSecretGenerator {
       script = ''
+        mkdir $out
+
         ${openssl}/bin/openssl genrsa -out rsa_private.key ${toString size}
         ${openssl}/bin/openssl rsa -in rsa_private.key -pubout -out rsa_public.key
 
