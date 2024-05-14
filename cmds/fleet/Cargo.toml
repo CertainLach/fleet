@@ -22,7 +22,7 @@ age = { version = "0.10", features = ["ssh", "armor"] }
 base64 = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
 z85 = "3.0"
-clap = { version = "4.5", features = ["derive", "env", "wrap_help", "unicode"] }
+clap = { version = ">=4.4, <4.5", features = ["derive", "env", "wrap_help", "unicode"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 tokio-util = { version = "0.7", features = ["codec"] }

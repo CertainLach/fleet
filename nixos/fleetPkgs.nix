@@ -15,7 +15,7 @@
           cargoLock = {
             lockFile = ../Cargo.lock;
             outputHashes = {
-              "alejandra-3.0.0" = "sha256-lStDIPizbJipd1JpNKX1olBKzyIosyC2U/mVFwJPcZE=";
+              "alejandra-3.0.0" = "sha256-q2oTMen8E1YUbNyU4chPOj728/YR0RzdpN+bNjZX2QU=";
             };
           };
         }) {};
