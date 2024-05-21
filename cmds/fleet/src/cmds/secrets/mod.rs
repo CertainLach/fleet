@@ -1,26 +1,28 @@
-use crate::{
-	better_nix_eval::Field,
-	fleetdata::{FleetSecret, FleetSharedSecret, SecretData},
-	host::Config,
-	nix_go, nix_go_json,
+use std::{
+	collections::{BTreeMap, BTreeSet, HashSet},
+	ffi::OsString,
+	io::{self, stdin, stdout, Read, Write},
+	path::PathBuf,
 };
+
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use chrono::{DateTime, Utc};
-use clap::{error::ErrorKind, Parser};
+use clap::Parser;
 use crossterm::{terminal, tty::IsTty};
+use fleet_shared::SecretData;
 use itertools::Itertools;
 use owo_colors::OwoColorize;
 use serde::Deserialize;
-use std::{
-	collections::{BTreeSet, HashSet},
-	ffi::OsString,
-	io::{self, stdin, Cursor, Read, Write},
-	path::PathBuf,
-};
 use tabled::{Table, Tabled};
-use tempfile::NamedTempFile;
-use tokio::{fs::read_to_string, process::Command};
+use tokio::{fs::read, process::Command};
 use tracing::{error, info, info_span, warn, Instrument};
+
+use crate::{
+	better_nix_eval::Field,
+	fleetdata::{encrypt_secret_data, FleetSecret, FleetSecretPart, FleetSharedSecret},
+	host::Config,
+	nix_go, nix_go_json,
+};
 
 #[derive(Parser)]
 pub enum Secret {
@@ -38,6 +40,9 @@ pub enum Secret {
 		/// Secret public part
 		#[clap(long)]
 		public: Option<String>,
+		/// How to name public secret part
+		#[clap(long, default_value = "public")]
+		public_name: String,
 		/// Load public part from specified file
 		#[clap(long)]
 		public_file: Option<PathBuf>,
@@ -49,6 +54,9 @@ pub enum Secret {
 		/// Secret with this name already exists, override its value while keeping the same owners.
 		#[clap(long)]
 		re_add: bool,
+
+		#[clap(default_value = "secret")]
+		part_name: String,
 	},
 	/// Add secret, data should be provided in stdin
 	Add {
@@ -59,21 +67,26 @@ pub enum Secret {
 		/// Override secret if already present
 		#[clap(long)]
 		force: bool,
+		/// Secret public part
 		#[clap(long)]
 		public: Option<String>,
+		/// How to name public secret part
+		#[clap(long, default_value = "public")]
+		public_name: String,
+		/// Load public part from specified file
 		#[clap(long)]
 		public_file: Option<PathBuf>,
+
+		#[clap(default_value = "secret")]
+		part_name: String,
 	},
 	/// Read secret from remote host, requires sudo on said host
 	Read {
 		name: String,
 		machine: String,
-		#[clap(long)]
-		plaintext: bool,
-	},
-	ReadPublic {
-		name: String,
-		machine: String,
+
+		#[clap(default_value = "secret")]
+		part_name: String,
 	},
 	UpdateShared {
 		name: String,
@@ -89,6 +102,9 @@ pub enum Secret {
 		/// Which host should we use to decrypt
 		#[clap(long)]
 		prefer_identities: Vec<String>,
+
+		#[clap(default_value = "secret")]
+		part_name: String,
 	},
 	Regenerate {
 		/// Which host should we use to decrypt, in case if reencryption is required, without
@@ -97,6 +113,16 @@ pub enum Secret {
 		prefer_identities: Vec<String>,
 	},
 	List {},
+	Edit {
+		name: String,
+		machine: String,
+
+		#[clap(default_value = "secret")]
+		part: String,
+
+		#[clap(long)]
+		add: bool,
+	},
 }
 
 #[tracing::instrument(skip(config, secret, field, prefer_identities))]
@@ -144,10 +170,16 @@ async fn update_owner_set(
 			bail!("no available holder found");
 		};
 
-		if let Some(data) = secret.secret.secret {
+		for (part_name, part) in secret.secret.parts.iter_mut() {
+			let _span = info_span!("part reencryption", part_name);
+			if !part.raw.encrypted {
+				continue;
+			}
 			let host = config.host(identity_holder).await?;
-			let encrypted = host.reencrypt(data, updated_set.to_vec()).await?;
-			secret.secret.secret = Some(encrypted);
+			let encrypted = host
+				.reencrypt(part.raw.clone(), updated_set.to_vec())
+				.await?;
+			part.raw = encrypted;
 		}
 
 		secret.owners = updated_set.to_vec();
@@ -232,13 +264,17 @@ async fn generate_impure(
 		ensure!(marker == "SUCCESS", "generation not succeeded");
 	}
 
-	let public = host.read_file_text(format!("{out}/public")).await.ok();
-	let secret = host.read_file_bin(format!("{out}/secret")).await.ok();
-	if let Some(secret) = &secret {
-		ensure!(
-			age::Decryptor::new(Cursor::new(&secret)).is_ok(),
-			"builder produced non-encrypted value as secret, this is highly insecure, and not allowed."
-		);
+	let mut parts = BTreeMap::new();
+	for part in host.read_dir(&out).await? {
+		if part == "created_at" || part == "expired_at" || part == "marker" {
+			continue;
+		}
+		let contents: SecretData = host
+			.read_file_text(format!("{out}/{part}"))
+			.await?
+			.parse()
+			.map_err(|e| anyhow!("failed to decode secret {out:?} part {part:?}: {e}"))?;
+		parts.insert(part.to_owned(), FleetSecretPart { raw: contents });
 	}
 
 	let created_at = host.read_file_value(format!("{out}/created_at")).await?;
@@ -247,8 +283,7 @@ async fn generate_impure(
 	Ok(FleetSecret {
 		created_at,
 		expires_at,
-		public,
-		secret: secret.map(SecretData),
+		parts,
 	})
 }
 async fn generate(
@@ -310,15 +345,31 @@ async fn generate_shared(
 async fn parse_public(
 	public: Option<String>,
 	public_file: Option<PathBuf>,
-) -> Result<Option<String>> {
+) -> Result<Option<SecretData>> {
 	Ok(match (public, public_file) {
-		(Some(v), None) => Some(v),
-		(None, Some(v)) => Some(read_to_string(v).await?),
+		(Some(v), None) => Some(SecretData {
+			data: v.into(),
+			encrypted: false,
+		}),
+		(None, Some(v)) => Some(SecretData {
+			data: read(v).await?,
+			encrypted: false,
+		}),
 		(Some(_), Some(_)) => {
 			bail!("only public or public_file should be set")
 		}
 		(None, None) => None,
 	})
+}
+
+async fn parse_secret() -> Result<Option<Vec<u8>>> {
+	let mut input = vec![];
+	io::stdin().read_to_end(&mut input)?;
+	if input.is_empty() {
+		Ok(None)
+	} else {
+		Ok(Some(input))
+	}
 }
 
 fn parse_machines(
@@ -391,9 +442,11 @@ impl Secret {
 				name,
 				force,
 				public,
+				public_name,
 				public_file,
 				expires_at,
 				re_add,
+				part_name,
 			} => {
 				// TODO: Forbid updating secrets with set expectedOwners (= not user-managed).
 
@@ -415,20 +468,21 @@ impl Secret {
 
 				let recipients = config.recipients(machines.clone()).await?;
 
-				let secret = {
-					let mut input = vec![];
-					io::stdin().read_to_end(&mut input)?;
+				let mut parts = BTreeMap::new();
 
-					if input.is_empty() {
-						None
-					} else {
-						Some(
-							SecretData::encrypt(recipients, input)
-								.ok_or_else(|| anyhow!("no recipients provided"))?,
-						)
-					}
-				};
-				let public = parse_public(public, public_file).await?;
+				let mut input = vec![];
+				io::stdin().read_to_end(&mut input)?;
+
+				if !input.is_empty() {
+					let encrypted = encrypt_secret_data(recipients, input)
+						.ok_or_else(|| anyhow!("no recipients provided"))?;
+					parts.insert(part_name, FleetSecretPart { raw: encrypted });
+				}
+
+				if let Some(public) = parse_public(public, public_file).await? {
+					parts.insert(public_name, FleetSecretPart { raw: public });
+				}
+
 				config.replace_shared(
 					name,
 					FleetSharedSecret {
@@ -436,8 +490,7 @@ impl Secret {
 						secret: FleetSecret {
 							created_at: Utc::now(),
 							expires_at,
-							secret,
-							public,
+							parts,
 						},
 					},
 				);
@@ -447,24 +500,26 @@ impl Secret {
 				name,
 				force,
 				public,
+				public_name,
 				public_file,
+				part_name,
 			} => {
-				let recipient = config.recipient(&machine).await?;
-
-				let secret = {
-					let mut input = vec![];
-					io::stdin().read_to_end(&mut input)?;
-					if input.is_empty() {
-						bail!("no data provided")
-					}
-
-					Some(SecretData::encrypt(vec![recipient], input).expect("recipient provided"))
-				};
-
 				if config.has_secret(&machine, &name) && !force {
 					bail!("secret already defined");
 				}
-				let public = parse_public(public, public_file).await?;
+
+				let mut parts = BTreeMap::new();
+
+				if let Some(secret) = parse_secret().await? {
+					let recipient = config.recipient(&machine).await?;
+					let encrypted =
+						encrypt_secret_data(vec![recipient], secret).expect("recipient provided");
+					parts.insert(part_name, FleetSecretPart { raw: encrypted });
+				}
+
+				if let Some(public) = parse_public(public, public_file).await? {
+					parts.insert(public_name, FleetSecretPart { raw: public });
+				};
 
 				config.insert_secret(
 					&machine,
@@ -472,8 +527,7 @@ impl Secret {
 					FleetSecret {
 						created_at: Utc::now(),
 						expires_at: None,
-						secret,
-						public,
+						parts,
 					},
 				);
 			}
@@ -481,27 +535,20 @@ impl Secret {
 			Secret::Read {
 				name,
 				machine,
-				plaintext,
+				part_name,
 			} => {
 				let secret = config.host_secret(&machine, &name)?;
-				let Some(secret) = secret.secret else {
-					bail!("no secret {name}");
+				let Some(secret) = secret.parts.get(&part_name) else {
+					bail!("no part {part_name} in secret {name}");
 				};
-				let host = config.host(&machine).await?;
-				let data = host.decrypt(secret).await?;
-				if plaintext {
-					let s = String::from_utf8(data).context("output is not utf8")?;
-					print!("{s}");
+				let data = if secret.raw.encrypted {
+					let host = config.host(&machine).await?;
+					host.decrypt(secret.raw.clone()).await?
 				} else {
-					println!("{}", z85::encode(&data));
-				}
-			}
-			Secret::ReadPublic { name, machine } => {
-				let secret = config.host_secret(&machine, &name)?;
-				let Some(public) = secret.public else {
-					bail!("no secret {name}");
+					secret.raw.data.clone()
 				};
-				print!("{public}");
+
+				stdout().write_all(&data)?;
 			}
 			Secret::UpdateShared {
 				name,
@@ -509,11 +556,12 @@ impl Secret {
 				add_machines,
 				remove_machines,
 				prefer_identities,
+				part_name,
 			} => {
 				// TODO: Forbid updating secrets with set expectedOwners (= not user-managed).
 
 				let secret = config.shared_secret(&name)?;
-				if secret.secret.secret.is_none() {
+				if secret.secret.parts.get(&part_name).is_none() {
 					bail!("no secret");
 				}
 
@@ -572,6 +620,10 @@ impl Secret {
 					}
 				}
 				for host in config.list_hosts().await? {
+					if config.should_skip(&host.name) {
+						continue;
+					}
+
 					let _span = info_span!("host", host = host.name).entered();
 					let expected_set = host
 						.list_configured_secrets()
@@ -664,7 +716,103 @@ impl Secret {
 				}
 				info!("loaded\n{}", Table::new(table).to_string())
 			}
+			Secret::Edit {
+				name,
+				machine,
+				part,
+				add,
+			} => {
+				let secret = config.host_secret(&machine, &name)?;
+				if let Some(data) = secret.parts.get(&part) {
+					let host = config.host(&machine).await?;
+					let secret = host.decrypt(data.raw.clone()).await?;
+					String::from_utf8(secret).context("secret is not utf8")?
+				} else if add {
+					String::new()
+				} else {
+					bail!("part {part} not found in secret {name}. Did you mean to `--add` it?");
+				};
+			}
 		}
 		Ok(())
 	}
+}
+
+async fn edit_temp_file(
+	builder: tempfile::Builder<'_, '_>,
+	r: Vec<u8>,
+	header: &str,
+	comment: &str,
+) -> Result<(Vec<u8>, Option<String>), anyhow::Error> {
+	if !stdin().is_tty() {
+		// TODO: Also try to open /dev/tty directly?
+		bail!("stdin is not tty, can't open editor");
+	}
+
+	use std::fmt::Write;
+	let mut file = builder.tempfile()?;
+
+	let mut full_header = String::new();
+	let mut had = false;
+	for line in header.trim_end().lines() {
+		had = true;
+		writeln!(&mut full_header, "{comment}{line}")?;
+	}
+	if had {
+		writeln!(&mut full_header, "{}", comment.trim_end())?;
+	}
+	writeln!(
+		&mut full_header,
+		"{comment}Do not touch this header! It will be removed automatically"
+	)?;
+
+	file.write_all(full_header.as_bytes())?;
+	file.write_all(&r)?;
+
+	let abs_path = file.into_temp_path();
+	let editor = std::env::var_os("VISUAL")
+		.or_else(|| std::env::var_os("EDITOR"))
+		.unwrap_or_else(|| "vi".into());
+	let editor_args = shlex::bytes::split(editor.as_encoded_bytes())
+		.ok_or_else(|| anyhow!("EDITOR env var has wrong syntax"))?;
+	let editor_args = editor_args
+		.into_iter()
+		.map(|v| {
+			// Only ASCII subsequences are replaced
+			unsafe { OsString::from_encoded_bytes_unchecked(v) }
+		})
+		.collect_vec();
+	let Some((editor, args)) = editor_args.split_first() else {
+		bail!("EDITOR env var has no command");
+	};
+	let mut command = Command::new(editor);
+	command.args(args);
+
+	let path_arg = abs_path.canonicalize()?;
+
+	// TODO: Save full state, using tcget/_getmode/_setmode
+	let was_raw = terminal::is_raw_mode_enabled()?;
+	terminal::enable_raw_mode()?;
+
+	let status = command.arg(path_arg).status().await;
+
+	if !was_raw {
+		terminal::disable_raw_mode()?;
+	}
+
+	let success = match status {
+		Ok(s) => s.success(),
+		Err(e) if e.kind() == io::ErrorKind::NotFound => {
+			bail!("editor not found")
+		}
+		Err(e) => bail!("editor spawn error: {e}"),
+	};
+
+	let mut file = std::fs::read(&abs_path).context("read editor output")?;
+	let Some(v) = file.strip_prefix(full_header.as_bytes()) else {
+		todo!();
+	};
+	todo!();
+
+	// Ok((success, abs_path))
 }

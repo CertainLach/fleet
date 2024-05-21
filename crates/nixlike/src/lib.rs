@@ -38,6 +38,57 @@ pub enum Value {
 	Null,
 }
 
+fn count_spaces(l: &str) -> usize {
+	l.chars().take_while(|&c| c == ' ').count()
+}
+fn is_significant(l: &str) -> bool {
+	count_spaces(l) != l.len()
+}
+
+fn dedent(l: &str, by: usize) -> &str {
+	assert!(
+		l[0..by.min(l.len())].chars().all(|c| c == ' '),
+		"dedent calculation is wrong"
+	);
+	&l[by.min(l.len())..]
+}
+
+fn process_multiline(lines: Vec<&str>) -> String {
+	// Even when parsing '''', there is single "line" between those '' delimiters.
+	// unwrap_or is for case where there is no significant lines
+	let dedent_by = lines
+		.iter()
+		.copied()
+		.filter(|c| is_significant(c))
+		.map(count_spaces)
+		.min()
+		.unwrap_or(0);
+
+	let mut out = String::new();
+
+	let mut had_first = false;
+	for (i, line) in lines.into_iter().enumerate() {
+		// Newline after '' is ignored, if there is no text.
+		if i == 0 && !is_significant(line) {
+			continue;
+		}
+		if had_first {
+			out.push('\n');
+		}
+		had_first = true;
+		// ''' is hard escape
+		for (i, part) in dedent(line, dedent_by).split("'''").enumerate() {
+			if i != 0 {
+				out.push_str(r#"""""#);
+			}
+			// This is the only replacements done by nixlike writer, no need to support more.
+			out.push_str(&part.replace("''${", "${").replace("''\\t", "\t"));
+		}
+	}
+
+	out
+}
+
 peg::parser! {
 pub grammar nixlike() for str {
 	rule number() -> i64
@@ -50,8 +101,17 @@ pub grammar nixlike() for str {
 		/ "\\r" { "\r" }
 		/ "\\$" { "$" }
 		/ c:$([_]) { c }
-	rule string() -> String
+	rule string() -> String = singleline_string() / multiline_string();
+	rule singleline_string() -> String
 		= quiet! { "\"" v:(!"\"" c:string_char() {c})* "\"" { v.into_iter().collect() } } / expected!("<string>")
+	pub rule multiline_string() -> String
+		= "''"
+		// First line may also contain text, and whitespace for it is counted, but if it is empty - then it is'nt counted as full line...
+		// This logic is complicated, see `parse_multiline` test.
+		lines:$(("'''" / !"''" [_])*) "''"
+		{
+			process_multiline(lines.split('\n').collect())
+		}
 	rule boolean() -> bool
 		= quiet! { "true" {true}
 		/ "false" {false} } / expected!("<boolean>")
@@ -134,4 +194,13 @@ fn test() {
 pub fn format_nix(value: &String) -> String {
 	let (_, out) = alejandra::format::in_memory("".to_owned(), value.to_owned());
 	out
+}
+
+#[test]
+fn parse_multiline() {
+	assert_eq!(nixlike::multiline_string("''\n''").expect("parse"), "");
+	assert_eq!(nixlike::multiline_string("''\n\n''").expect("parse"), "\n");
+	assert_eq!(nixlike::multiline_string("''t\n''").expect("parse"), "t\n");
+	assert_eq!(nixlike::multiline_string("''''").expect("parse"), "");
+	assert_eq!(nixlike::multiline_string("''    ''").expect("parse"), "");
 }

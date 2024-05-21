@@ -19,10 +19,15 @@ hostname = "0.3"
 age-core = "0.10"
 peg = "0.8"
 age = { version = "0.10", features = ["ssh", "armor"] }
-base64 = "0.21"
+base64 = "0.22.1"
 chrono = { version = "0.4", features = ["serde"] }
-z85 = "3.0"
-clap = { version = ">=4.4, <4.5", features = ["derive", "env", "wrap_help", "unicode"] }
+# Using fixed version for rust on stable nixos branches.
+clap = { version = ">=4.4, <4.5", features = [
+	"derive",
+	"env",
+	"wrap_help",
+	"unicode",
+] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 tokio-util = { version = "0.7", features = ["codec"] }
@@ -40,7 +45,8 @@ abort-on-drop = "0.2"
 unindent = "0.2"
 regex = "1.10"
 openssh = "0.10"
-crossterm = "0.27"
+crossterm = { version = "0.27.0", features = ["use-dev-tty"] }
+fleet-shared.workspace = true
 
 tracing-indicatif = { version = "0.3", optional = true }
 human-repr = { version = "1.1", optional = true }
@@ -48,4 +54,9 @@ indicatif = { version = "0.17", optional = true }
 
 [features]
 # Not quite stable
-indicatif = ["tracing-indicatif", "dep:indicatif", "human-repr", "better-command/indicatif"]
+indicatif = [
+	"tracing-indicatif",
+	"dep:indicatif",
+	"human-repr",
+	"better-command/indicatif",
+]

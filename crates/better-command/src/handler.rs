@@ -1,7 +1,9 @@
 //! Collection of handlers, which transform program-specific stdout format to tracing
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::{
+	collections::HashMap,
+	sync::{Arc, Mutex},
+};
 
 use once_cell::sync::Lazy;
 use regex::Regex;

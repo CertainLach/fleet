@@ -38,7 +38,28 @@ pub fn escape_string(str: &str) -> String {
 }
 
 pub fn write_nix_str(str: &str, out: &mut String) {
-	out.push_str(&escape_string(str))
+	if str.ends_with('\n') {
+		out.push_str("''");
+		for ele in str.split('\n') {
+			out.push('\n');
+			out.push_str(
+				&ele
+					// '' is escaped with '
+					.replace("''", "'''")
+					// ${ is escaped wth ''
+					.replace("${", "''${")
+					// \t is not counted as whitespace for dedent
+					// to avoid confusion, it is printed literally.
+					//
+					// ...Escaped \t literal should be prefixed with '' for... Idk, this logic is complicated.
+					.replace('\t', "''\\t"),
+			);
+		}
+		// Final newline is assumed due to str.ends_with condition
+		out.push_str("''");
+	} else {
+		out.push_str(&escape_string(str))
+	}
 }
 
 fn write_nix_buf(value: &Value, out: &mut String) {

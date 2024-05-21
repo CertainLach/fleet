@@ -7,14 +7,8 @@
 with lib;
 with fleetLib; let
   sharedSecret = with types; ({config, ...}: {
+    freeformType = types.lazyAttrsOf unspecified;
     options = {
-      managed = mkOption {
-        type = bool;
-        description = ''
-          Is this secret managed by configuration (I.e will work with reencrypt/etc), or it is configured by user
-        '';
-      };
-
       expectedOwners = mkOption {
         type = nullOr (listOf str);
         description = ''
@@ -71,23 +65,10 @@ with fleetLib; let
         '';
         default = [];
       };
-      # TODO: Make secret generator generate arbitrary number of secret/public parts?
-      # Make it generate a folder, where all files except suffixed by .enc are public, and the rest are secret?
-      # How should modules refer to those files then?
-      public = mkOption {
-        type = nullOr str;
-        description = "Secret public data. Imported from fleet.nix";
-        default = null;
-      };
-      secret = mkOption {
-        type = nullOr str;
-        description = "Encrypted secret data. Imported from fleet.nix";
-        default = null;
-        internal = true;
-      };
     };
   });
   hostSecret = with types; {
+    freeformType = types.lazyAttrsOf unspecified;
     options = {
       createdAt = mkOption {
         type = nullOr str;
@@ -97,21 +78,15 @@ with fleetLib; let
         type = nullOr str;
         default = null;
       };
-      public = mkOption {
-        type = nullOr str;
-        description = "Secret public data. Imported from fleet.nix";
-        default = null;
-      };
-      secret = mkOption {
-        type = nullOr str;
-        description = "Encrypted secret data. Imported from fleet.nix";
-        default = null;
-        internal = true;
-      };
     };
   };
 in {
   options = with types; {
+    version = mkOption {
+      type = str;
+      default = "";
+      internal = true;
+    };
     sharedSecrets = mkOption {
       type = attrsOf (submodule sharedSecret);
       default = {};
@@ -134,18 +109,20 @@ in {
       config.sharedSecrets;
     hosts = hostsToAttrs (host: {
       nixosModules = let
-        cleanupSecret = secretName: v: {
-          inherit (v) public secret;
-          shared = true;
-        };
+        # processPart
+        processSecret = v:
+          (removeAttrs v ["createdAt" "expiresAt" "expectedOwners" "owners" "regenerateOnOwnerAdded" "regenerateOnOwnerRemoved"])
+          // {
+            shared = true;
+          };
       in [
         {
           secrets =
             (
-              mapAttrs cleanupSecret
+              mapAttrs (_: processSecret)
               (filterAttrs (_: v: builtins.elem host v.owners) config.sharedSecrets)
             )
-            // (mapAttrs cleanupSecret (config.hostSecrets.${host} or {}));
+            // (mapAttrs (_: processSecret) (config.hostSecrets.${host} or {}));
         }
       ];
     });

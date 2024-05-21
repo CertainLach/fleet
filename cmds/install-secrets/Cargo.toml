@@ -20,4 +20,4 @@ clap = { version = ">=4.4, <4.5", features = [
 	"unicode",
 ] }
 tempfile = "3.10.0"
-z85 = "3.0.5"
+fleet-shared.workspace = true

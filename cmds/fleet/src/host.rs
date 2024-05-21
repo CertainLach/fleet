@@ -9,8 +9,9 @@ use std::{
 	sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::{ArgGroup, Parser};
+use fleet_shared::SecretData;
 use openssh::SessionBuilder;
 use serde::de::DeserializeOwned;
 use tempfile::NamedTempFile;
@@ -18,7 +19,7 @@ use tempfile::NamedTempFile;
 use crate::{
 	better_nix_eval::{Field, NixSessionPool},
 	command::MyCommand,
-	fleetdata::{FleetData, FleetSecret, FleetSharedSecret, SecretData},
+	fleetdata::{FleetData, FleetSecret, FleetSharedSecret},
 	nix_go, nix_go_json,
 };
 
@@ -89,6 +90,16 @@ impl ConfigHost {
 		cmd.arg(path);
 		cmd.run_string().await
 	}
+	pub async fn read_dir(&self, path: impl AsRef<OsStr>) -> Result<Vec<String>> {
+		let mut cmd = self.cmd("ls").await?;
+		cmd.arg(path);
+		let out = cmd.run_string().await?;
+		let mut lines = out.split('\n');
+		if let Some(last) = lines.next_back() {
+			ensure!(last == "", "output of ls should end with newline");
+		}
+		Ok(lines.map(ToOwned::to_owned).collect())
+	}
 	#[allow(dead_code)]
 	pub async fn read_file_json<D: DeserializeOwned>(&self, path: impl AsRef<OsStr>) -> Result<D> {
 		let text = self.read_file_text(path).await?;
@@ -111,18 +122,22 @@ impl ConfigHost {
 	}
 
 	pub async fn decrypt(&self, data: SecretData) -> Result<Vec<u8>> {
+		ensure!(data.encrypted, "secret is not encrypted");
 		let mut cmd = self.cmd("fleet-install-secrets").await?;
-		cmd.arg("decrypt").eqarg("--secret", data.encode_z85());
+		cmd.arg("decrypt").eqarg("--secret", data.to_string());
 		let encoded = cmd
 			.sudo()
 			.run_string()
 			.await
 			.context("failed to call remote host for decrypt")?;
-		z85::decode(encoded.trim_end()).context("bad encoded data? outdated host?")
+		let data: SecretData = encoded.parse().map_err(|e| anyhow!("{e}"))?;
+		ensure!(!data.encrypted, "didn't decrypted secret");
+		Ok(data.data)
 	}
 	pub async fn reencrypt(&self, data: SecretData, targets: Vec<String>) -> Result<SecretData> {
+		ensure!(data.encrypted, "secret is not encrypted");
 		let mut cmd = self.cmd("fleet-install-secrets").await?;
-		cmd.arg("reencrypt").eqarg("--secret", data.encode_z85());
+		cmd.arg("reencrypt").eqarg("--secret", data.to_string());
 		for target in targets {
 			let key = self.config.key(&target).await?;
 			cmd.eqarg("--targets", key);
@@ -132,7 +147,9 @@ impl ConfigHost {
 			.run_string()
 			.await
 			.context("failed to call remote host for decrypt")?;
-		SecretData::decode_z85(encoded.trim_end()).context("bad encoded data? outdated host?")
+		let data: SecretData = encoded.parse().map_err(|e| anyhow!("{e}"))?;
+		ensure!(!data.encrypted, "didn't decrypted secret");
+		Ok(data)
 	}
 	/// Returns path for futureproofing, as path might change i.e on conversion to CA
 	pub async fn remote_derivation(&self, path: &PathBuf) -> Result<PathBuf> {
@@ -324,7 +341,7 @@ impl Config {
 	}
 
 	pub fn save(&self) -> Result<()> {
-		let mut tempfile = NamedTempFile::new_in(self.directory.clone())?;
+		let mut tempfile = NamedTempFile::new_in(self.directory.clone()).context("failed to create updated version of fleet.nix in the same directory as original.\nDo you have write access to it? Access only to the fleet.nix won't be enough, the directory is used for atomic overwrite operation.\nIt is not recommended to use fleet by root anyway, move fleet project to your home directory.")?;
 		let data = nixlike::serialize(&self.data() as &FleetData)?;
 		tempfile.write_all(
 			format!(
