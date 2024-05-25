@@ -12,15 +12,14 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::{ArgGroup, Parser};
 use fleet_shared::SecretData;
+use nix_eval::{nix_go, nix_go_json, NixSessionPool, Value};
 use openssh::SessionBuilder;
 use serde::de::DeserializeOwned;
 use tempfile::NamedTempFile;
 
 use crate::{
-	better_nix_eval::{Field, NixSessionPool},
 	command::MyCommand,
 	fleetdata::{FleetData, FleetSecret, FleetSharedSecret},
-	nix_go, nix_go_json,
 };
 
 pub struct FleetConfigInternals {
@@ -30,12 +29,12 @@ pub struct FleetConfigInternals {
 	pub data: Mutex<FleetData>,
 	pub nix_args: Vec<OsString>,
 	/// fleet_config.config
-	pub config_field: Field,
+	pub config_field: Value,
 	/// fleet_config.unchecked.config
-	pub config_unchecked_field: Field,
+	pub config_unchecked_field: Value,
 
 	/// import nixpkgs {system = local};
-	pub default_pkgs: Field,
+	pub default_pkgs: Value,
 }
 
 #[derive(Clone)]
@@ -55,7 +54,7 @@ pub struct ConfigHost {
 	pub local: bool,
 	pub session: OnceLock<Arc<openssh::Session>>,
 
-	pub nixos_config: Option<Field>,
+	pub nixos_config: Option<Value>,
 }
 impl ConfigHost {
 	async fn open_session(&self) -> Result<Arc<openssh::Session>> {
@@ -201,7 +200,7 @@ impl ConfigHost {
 		}
 		Ok(out)
 	}
-	pub async fn secret_field(&self, name: &str) -> Result<Field> {
+	pub async fn secret_field(&self, name: &str) -> Result<Value> {
 		let Some(nixos) = &self.nixos_config else {
 			bail!("host is virtual and has no secrets");
 		};
@@ -209,7 +208,7 @@ impl ConfigHost {
 	}
 
 	/// Packages for this host, resolved with nixpkgs overlays
-	pub async fn pkgs(&self) -> Result<Field> {
+	pub async fn pkgs(&self) -> Result<Value> {
 		let Some(nixos) = &self.nixos_config else {
 			return Ok(self.config.default_pkgs.clone());
 		};
@@ -261,7 +260,7 @@ impl Config {
 		}
 		Ok(out)
 	}
-	pub async fn system_config(&self, host: &str) -> Result<Field> {
+	pub async fn system_config(&self, host: &str) -> Result<Value> {
 		let fleet_field = &self.config_unchecked_field;
 		Ok(nix_go!(fleet_field.hosts[{ host }].nixosSystem.config))
 	}
@@ -275,7 +274,7 @@ impl Config {
 	/// Shared secrets configured in fleet.nix or in flake
 	pub async fn list_configured_shared(&self) -> Result<Vec<String>> {
 		let config_field = &self.config_unchecked_field;
-		nix_go!(config_field.sharedSecrets).list_fields().await
+		Ok(nix_go!(config_field.sharedSecrets).list_fields().await?)
 	}
 	/// Shared secrets configured in fleet.nix
 	pub fn list_shared(&self) -> Vec<String> {
@@ -389,13 +388,13 @@ impl FleetOpts {
 		let pool = NixSessionPool::new(directory.as_os_str().to_owned(), nix_args.clone()).await?;
 		let root_field = pool.get().await?;
 
-		let builtins_field = Field::field(root_field.clone(), "builtins").await?;
+		let builtins_field = Value::binding(root_field.clone(), "builtins").await?;
 		if self.local_system == "detect" {
 			self.local_system = nix_go_json!(builtins_field.currentSystem);
 		}
 		let local_system = self.local_system.clone();
 
-		let fleet_root = Field::field(root_field, "fleetConfigurations").await?;
+		let fleet_root = Value::binding(root_field, "fleetConfigurations").await?;
 		let fleet_field = nix_go!(fleet_root.default);
 
 		let config_field = nix_go!(fleet_field.config);

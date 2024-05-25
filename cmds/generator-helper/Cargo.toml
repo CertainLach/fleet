@@ -1,0 +1,12 @@
+[package]
+name = "fleet-generator-helper"
+edition = "2021"
+version.workspace = true
+
+[dependencies]
+age.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
+fleet-shared.workspace = true
+rand = "0.8.5"

@@ -1,5 +1,5 @@
 #![recursion_limit = "512"]
-#![feature(try_blocks, lint_reasons)]
+#![feature(try_blocks)]
 
 pub(crate) mod cmds;
 pub(crate) mod command;
@@ -173,6 +173,8 @@ async fn main() -> ExitCode {
 	setup_logging();
 	if let Err(e) = main_real().await {
 		// If I remove this line, the next error!() line gets eaten.
+		// This is a bug in indicatif, it needs to be fixed
+		#[cfg(feature = "indicatif")]
 		info!("fixme: this line gets eaten by tracing-indicatif on levels info+");
 		error!("{e:#}");
 		return ExitCode::FAILURE;
@@ -181,7 +183,7 @@ async fn main() -> ExitCode {
 }
 
 async fn main_real() -> Result<()> {
-	let _ = better_nix_eval::TOKIO_RUNTIME.set(tokio::runtime::Handle::current());
+	nix_eval::init_tokio();
 
 	let nix_args = std::env::var_os("NIX_ARGS")
 		.map(|a| extra_args::parse_os(&a))

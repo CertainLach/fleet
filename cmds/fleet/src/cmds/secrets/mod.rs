@@ -11,6 +11,7 @@ use clap::Parser;
 use crossterm::{terminal, tty::IsTty};
 use fleet_shared::SecretData;
 use itertools::Itertools;
+use nix_eval::{nix_go, nix_go_json, Value};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use tabled::{Table, Tabled};
@@ -18,10 +19,8 @@ use tokio::{fs::read, process::Command};
 use tracing::{error, info, info_span, warn, Instrument};
 
 use crate::{
-	better_nix_eval::Field,
 	fleetdata::{encrypt_secret_data, FleetSecret, FleetSecretPart, FleetSharedSecret},
 	host::Config,
-	nix_go, nix_go_json,
 };
 
 #[derive(Parser)]
@@ -130,7 +129,7 @@ async fn update_owner_set(
 	secret_name: &str,
 	config: &Config,
 	mut secret: FleetSharedSecret,
-	field: Field,
+	field: Value,
 	updated_set: &[String],
 	prefer_identities: &[String],
 ) -> Result<FleetSharedSecret> {
@@ -197,8 +196,8 @@ enum GeneratorKind {
 async fn generate_pure(
 	_config: &Config,
 	_display_name: &str,
-	_secret: Field,
-	_default_generator: Field,
+	_secret: Value,
+	_default_generator: Value,
 	_owners: &[String],
 ) -> Result<FleetSecret> {
 	bail!("pure generators are broken for now")
@@ -206,8 +205,8 @@ async fn generate_pure(
 async fn generate_impure(
 	config: &Config,
 	_display_name: &str,
-	secret: Field,
-	default_generator: Field,
+	secret: Value,
+	default_generator: Value,
 	owners: &[String],
 ) -> Result<FleetSecret> {
 	let generator = nix_go!(secret.generator);
@@ -289,7 +288,7 @@ async fn generate_impure(
 async fn generate(
 	config: &Config,
 	display_name: &str,
-	secret: Field,
+	secret: Value,
 	owners: &[String],
 ) -> Result<FleetSecret> {
 	let generator = nix_go!(secret.generator);
@@ -332,7 +331,7 @@ async fn generate(
 async fn generate_shared(
 	config: &Config,
 	display_name: &str,
-	secret: Field,
+	secret: Value,
 	expected_owners: Vec<String>,
 ) -> Result<FleetSharedSecret> {
 	// let owners: Vec<String> = nix_go_json!(secret.expectedOwners);

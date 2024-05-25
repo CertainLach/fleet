@@ -1,5 +1,9 @@
 //! Serialization/deserialization for nix subset usable for static configurations
-//! Serialized results from this library are readable by both this library and standard nix tools
+//!
+//! Serialized results from this library are readable by both this library and standard nix tools.
+//! Nix produced output should also be readable by this library, however, you can't write arbitrary nix
+//! expressions and expect it to work, only basic primitives are supported, and there is no
+//! variables/recursive records, interpolation, e.t.c.
 
 use linked_hash_map::LinkedHashMap;
 use peg::str::LineCol;
@@ -198,9 +202,15 @@ pub fn format_nix(value: &String) -> String {
 
 #[test]
 fn parse_multiline() {
+	// First line is ignored, unless there is a significant characters.
 	assert_eq!(nixlike::multiline_string("''\n''").expect("parse"), "");
+	// Rest of the lines are processed normally.
 	assert_eq!(nixlike::multiline_string("''\n\n''").expect("parse"), "\n");
+	// Example with significant character on first line.
 	assert_eq!(nixlike::multiline_string("''t\n''").expect("parse"), "t\n");
+	// There might be nothing in multiline string block.
 	assert_eq!(nixlike::multiline_string("''''").expect("parse"), "");
+	// And there also might just be spaces, they are removed due to dedent, and output is empty because
+	// first line was also ignored due to missing significant characters.
 	assert_eq!(nixlike::multiline_string("''    ''").expect("parse"), "");
 }

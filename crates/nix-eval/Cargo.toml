@@ -1,0 +1,18 @@
+[package]
+name = "nix-eval"
+edition = "2021"
+version.workspace = true
+
+[dependencies]
+better-command.workspace = true
+futures = "0.3.30"
+itertools = "0.13.0"
+nixlike.workspace = true
+r2d2 = "0.8.10"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror = "1.0.61"
+tokio = { workspace = true, features = ["process", "io-util"] }
+tokio-util = { version = "0.7.11", features = ["codec"] }
+tracing.workspace = true
+unindent = "0.2.3"

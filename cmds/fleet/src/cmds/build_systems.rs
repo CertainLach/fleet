@@ -4,10 +4,10 @@ use std::{env::current_dir, time::Duration};
 
 use crate::command::MyCommand;
 use crate::host::{Config, ConfigHost};
-use crate::nix_go;
 use anyhow::{anyhow, Result};
 use clap::{Parser, ValueEnum};
 use itertools::Itertools as _;
+use nix_eval::nix_go;
 use tokio::{task::LocalSet, time::sleep};
 use tracing::{error, field, info, info_span, warn, Instrument};
 

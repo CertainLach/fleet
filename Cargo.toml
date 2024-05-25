@@ -6,7 +6,27 @@ package.version = "0.1.0"
 [workspace.dependencies]
 nixlike = { path = "./crates/nixlike" }
 better-command = { path = "./crates/better-command" }
-bifrostlink = "0.1.0"
-uuid = { version = "1.7.0", features = ["v4"] }
-tokio = { version = "1.36.0", features = ["fs", "rt", "macros", "sync", "time", "rt-multi-thread"] }
 fleet-shared = { path = "./crates/fleet-shared" }
+tokio = { version = "1.36.0", features = [
+	"fs",
+	"rt",
+	"macros",
+	"sync",
+	"time",
+	"rt-multi-thread",
+] }
+# Using fixed version for rust on stable nixos branches.
+clap = { version = ">=4.4, <4.5", features = [
+	"derive",
+	"env",
+	"wrap_help",
+	"unicode",
+] }
+age = { version = "0.10", features = ["ssh"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.10"
+nix = {version = "0.27.1", features = ["user", "fs"]}

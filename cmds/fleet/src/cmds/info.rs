@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
 use crate::host::Config;
-use crate::nix_go_json;
 use anyhow::{ensure, Result};
 use clap::Parser;
+use nix_eval::nix_go_json;
 
 #[derive(Parser)]
 pub struct Info {
