@@ -14,23 +14,20 @@ mod fleetdata;
 use std::{ffi::OsString, process::ExitCode};
 
 use anyhow::{bail, Result};
-use clap::Parser;
-
+use clap::{CommandFactory, Parser};
 use cmds::{
 	build_systems::{BuildSystems, Deploy},
+	complete::Complete,
 	info::Info,
 	secrets::Secret,
 };
-use futures::future::LocalBoxFuture;
-use futures::stream::FuturesUnordered;
-use futures::TryStreamExt;
+use futures::{future::LocalBoxFuture, stream::FuturesUnordered, TryStreamExt};
 use host::{Config, FleetOpts};
 #[cfg(feature = "indicatif")]
 use human_repr::HumanCount;
 #[cfg(feature = "indicatif")]
 use indicatif::{ProgressState, ProgressStyle};
-use tracing::{error, info};
-use tracing::{info_span, Instrument};
+use tracing::{error, info, info_span, Instrument};
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -87,6 +84,9 @@ enum Opts {
 	Prefetch(Prefetch),
 	/// Config parsing
 	Info(Info),
+	/// Command completions
+	#[clap(hide(true))]
+	Complete(Complete),
 }
 
 #[derive(Parser)]
@@ -105,52 +105,59 @@ async fn run_command(config: &Config, command: Opts) -> Result<()> {
 		Opts::Secret(s) => s.run(config).await?,
 		Opts::Info(i) => i.run(config).await?,
 		Opts::Prefetch(p) => p.run(config).await?,
+		// TODO: actually parse commands before starting the async runtime
+		Opts::Complete(c) => {
+			tokio::task::spawn_blocking(move || c.run(RootOpts::command())).await?
+		}
 	};
 	Ok(())
 }
 
 fn setup_logging() {
 	#[cfg(feature = "indicatif")]
-	let indicatif_layer = IndicatifLayer::new().with_progress_style(
-		ProgressStyle::with_template(
-			"{color_start}{span_child_prefix} {span_name}{{{span_fields}}}{color_end} {wide_msg} {color_start}{download_progress} {elapsed}{color_end}",
-		)
-		.unwrap()
-		.with_key("download_progress", |state: &ProgressState, writer: &mut dyn std::fmt::Write| {
-			let Some(len) = state.len() else {
-				return;
-			};
-			let pos = state.pos();
-			if pos > len {
-				let _ = write!(writer, "{}", pos.human_count_bare());
-			} else {
-				let _ = write!(writer, "{} / {}", pos.human_count_bare(), len.human_count_bare());
-			}
-		})
-		.with_key(
-			"color_start",
-			|state: &ProgressState, writer: &mut dyn std::fmt::Write| {
-				use std::time::Duration;
-				let elapsed = state.elapsed();
+	let indicatif_layer = {
+		use std::time::Duration;
 
-				if elapsed > Duration::from_secs(60) {
-					// Red
-					let _ = write!(writer, "\x1b[{}m", 1 + 30);
-				} else if elapsed > Duration::from_secs(30) {
-					// Yellow
-					let _ = write!(writer, "\x1b[{}m", 3 + 30);
-				}
-			},
+		IndicatifLayer::new().with_progress_style(
+			ProgressStyle::with_template(
+				"{color_start}{span_child_prefix} {span_name}{{{span_fields}}}{color_end} {wide_msg} {color_start}{download_progress} {elapsed}{color_end}",
+			)
+				.unwrap()
+				.with_key("download_progress", |state: &ProgressState, writer: &mut dyn std::fmt::Write| {
+					let Some(len) = state.len() else {
+						return;
+					};
+					let pos = state.pos();
+					if pos > len {
+						let _ = write!(writer, "{}", pos.human_count_bare());
+					} else {
+						let _ = write!(writer, "{} / {}", pos.human_count_bare(), len.human_count_bare());
+					}
+				})
+				.with_key(
+					"color_start",
+					|state: &ProgressState, writer: &mut dyn std::fmt::Write| {
+						let elapsed = state.elapsed();
+
+						if elapsed > Duration::from_secs(60) {
+							// Red
+							let _ = write!(writer, "\x1b[{}m", 1 + 30);
+						} else if elapsed > Duration::from_secs(30) {
+							// Yellow
+							let _ = write!(writer, "\x1b[{}m", 3 + 30);
+						}
+					},
+				)
+				.with_key(
+					"color_end",
+					|state: &ProgressState, writer: &mut dyn std::fmt::Write| {
+						if state.elapsed() > Duration::from_secs(30) {
+							let _ = write!(writer, "\x1b[0m");
+						}
+					},
+				),
 		)
-		.with_key(
-			"color_end",
-			|state: &ProgressState, writer: &mut dyn std::fmt::Write| {
-				if state.elapsed() > Duration::from_secs(30) {
-					let _ = write!(writer, "\x1b[0m");
-				}
-			},
-		),
-	);
+	};
 
 	let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
@@ -160,7 +167,7 @@ fn setup_logging() {
 			.with_target(false);
 		#[cfg(feature = "indicatif")]
 		let sub = sub.with_writer(indicatif_layer.get_stdout_writer());
-		sub.with_filter(filter) // .withou,
+		sub.with_filter(filter) // .without,
 	});
 	// #[cfg(feature = "indicatif")]
 	#[cfg(feature = "indicatif")]
@@ -201,5 +208,16 @@ async fn main_real() -> Result<()> {
 			let _ = config.save();
 			Err(e)
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn verify_command() {
+		use clap::CommandFactory;
+		RootOpts::command().debug_assert();
 	}
 }

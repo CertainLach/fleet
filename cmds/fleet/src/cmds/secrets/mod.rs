@@ -32,6 +32,7 @@ pub enum Secret {
 		/// Secret name
 		name: String,
 		/// Secret owners
+		#[clap(long, short)]
 		machines: Vec<String>,
 		/// Override secret if already present
 		#[clap(long)]
@@ -363,7 +364,7 @@ async fn parse_public(
 
 async fn parse_secret() -> Result<Option<Vec<u8>>> {
 	let mut input = vec![];
-	io::stdin().read_to_end(&mut input)?;
+	stdin().read_to_end(&mut input)?;
 	if input.is_empty() {
 		Ok(None)
 	} else {

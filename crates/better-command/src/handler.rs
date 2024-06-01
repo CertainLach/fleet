@@ -2,10 +2,9 @@
 
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex},
+	sync::{Arc, LazyLock, Mutex},
 };
 
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
 use tracing::{info, info_span, warn, Span};
@@ -92,9 +91,9 @@ enum NixLog {
 }
 fn process_message(m: &str) -> String {
 	// Supposed to remove formatting characters except colors, as some programs try to reset cursor position etc.
-	static OSC_CLEANER: Lazy<Regex> =
-		Lazy::new(|| Regex::new(r"\x1B\]([^\x07\x1C]*[\x07\x1C])?|\r").unwrap());
-	static DETABBER: Lazy<Regex> = Lazy::new(|| Regex::new(r"\t").unwrap());
+	static OSC_CLEANER: LazyLock<Regex> =
+		LazyLock::new(|| Regex::new(r"\x1B\]([^\x07\x1C]*[\x07\x1C])?|\r").unwrap());
+	static DETABBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\t").unwrap());
 	let m = OSC_CLEANER.replace_all(m, "");
 	// Indicatif can't format tabs. This is not the correct tab formatting, as correct one should be aligned,
 	// and not just be replaced with the constant number of spaces, but it's ok for now, as statuses are single-line.
