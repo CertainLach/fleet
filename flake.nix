@@ -27,7 +27,13 @@
   }:
     with nixpkgs.lib;
       {
-        lib = import ./lib {inherit flake-utils;};
+        lib = import ./lib {
+          inherit flake-utils;
+          fleetPkgsForPkgs = pkgs: import ./pkgs {
+            inherit (pkgs) callPackage;
+            craneLib = crane.mkLib pkgs;
+          };
+        };
       }
       // flake-utils.lib.eachDefaultSystem (system: let
         pkgs =
@@ -70,7 +76,7 @@
           // (prefixAttrs "nixpkgs-stable-" (removeAttrs packages-with-nixpkgs-stable ["fleet"]));
 
         devShells.default = craneLib.devShell {
-          nativeBuildInputs = with pkgs; [
+          packages = with pkgs; [
             alejandra
             lld
             cargo-edit
