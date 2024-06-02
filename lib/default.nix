@@ -1,5 +1,4 @@
 {
-  flake-utils,
   fleetPkgsForPkgs,
 }: {
   fleetConfiguration = {

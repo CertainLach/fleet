@@ -6,7 +6,6 @@ pub(crate) mod command;
 pub(crate) mod host;
 pub(crate) mod keys;
 
-pub(crate) mod better_nix_eval;
 pub(crate) mod extra_args;
 
 mod fleetdata;

@@ -2,6 +2,7 @@
 name = "nix-eval"
 edition = "2021"
 version.workspace = true
+build = "build.rs"
 
 [dependencies]
 better-command.workspace = true
@@ -16,3 +17,7 @@ tokio = { workspace = true, features = ["process", "io-util"] }
 tokio-util = { version = "0.7.11", features = ["codec"] }
 tracing.workspace = true
 unindent = "0.2.3"
+
+# [build-dependencies]
+# bindgen = "0.69.4"
+# pkg-config = "0.3.30"
