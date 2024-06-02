@@ -175,10 +175,20 @@ fn setup_logging() {
 	reg.init();
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
+	let opts = RootOpts::parse();
+	if let Opts::Complete(c) = &opts.command {
+		c.run(RootOpts::command());
+		return ExitCode::SUCCESS;
+	}
+
 	setup_logging();
-	if let Err(e) = main_real().await {
+	async_main(opts)
+}
+
+#[tokio::main]
+async fn async_main(opts: RootOpts) -> ExitCode {
+	if let Err(e) = main_real(opts).await {
 		// If I remove this line, the next error!() line gets eaten.
 		// This is a bug in indicatif, it needs to be fixed
 		#[cfg(feature = "indicatif")]
@@ -189,14 +199,13 @@ async fn main() -> ExitCode {
 	ExitCode::SUCCESS
 }
 
-async fn main_real() -> Result<()> {
+async fn main_real(opts: RootOpts) -> Result<()> {
 	nix_eval::init_tokio();
 
 	let nix_args = std::env::var_os("NIX_ARGS")
 		.map(|a| extra_args::parse_os(&a))
 		.transpose()?
 		.unwrap_or_default();
-	let opts = RootOpts::parse();
 	let config = opts.fleet_opts.build(nix_args).await?;
 
 	match run_command(&config, opts.command).await {
