@@ -1,15 +1,16 @@
-use std::os::unix::fs::symlink;
-use std::path::PathBuf;
-use std::{env::current_dir, time::Duration};
+use std::{env::current_dir, os::unix::fs::symlink, path::PathBuf, time::Duration};
 
-use crate::command::MyCommand;
-use crate::host::{Config, ConfigHost};
 use anyhow::{anyhow, Result};
 use clap::{Parser, ValueEnum};
 use itertools::Itertools as _;
 use nix_eval::nix_go;
 use tokio::{task::LocalSet, time::sleep};
 use tracing::{error, field, info, info_span, warn, Instrument};
+
+use crate::{
+	command::MyCommand,
+	host::{Config, ConfigHost},
+};
 
 #[derive(Parser)]
 pub struct Deploy {

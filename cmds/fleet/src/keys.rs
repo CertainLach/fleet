@@ -1,11 +1,12 @@
 use std::str::FromStr;
 
-use crate::host::Config;
 use age::Recipient;
 use anyhow::{anyhow, Result};
 use futures::{StreamExt, TryStreamExt};
 use itertools::Itertools;
 use tracing::warn;
+
+use crate::host::Config;
 
 impl Config {
 	pub fn cached_key(&self, host: &str) -> Option<String> {
