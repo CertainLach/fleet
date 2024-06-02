@@ -1,4 +1,7 @@
-{craneLib}:
+{
+  craneLib,
+  installShellFiles,
+}:
 craneLib.buildPackage rec {
   pname = "fleet";
 
@@ -7,10 +10,12 @@ craneLib.buildPackage rec {
 
   cargoExtraArgs = "--locked -p ${pname}";
 
+  nativeBuildInputs = [installShellFiles];
+
   postInstall = ''
     for shell in bash fish zsh; do
       installShellCompletion --cmd fleet \
-        --$shell <($out/bin/fleet complete --shell $shell --print)
+        --$shell <($out/bin/fleet complete --shell $shell)
     done
   '';
 }
