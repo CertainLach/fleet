@@ -36,6 +36,31 @@
               craneLib = crane.mkLib pkgs;
             };
         };
+        # To be used with https://github.com/NixOS/nix/pull/8892
+        schemas = {
+          fleetConfigurations = {
+            version = 1;
+            doc = ''
+              The `fleetConfigurations` flake output defines fleet cluster configurations.
+            '';
+            inventory = output: {
+              children =
+                builtins.mapAttrs (configName: cluster: {
+                  what = "fleet cluster configuration";
+
+                  children =
+                    builtins.mapAttrs (hostName: host: {
+                      what = "host [${host.system}]";
+                    })
+                    cluster.config.hosts;
+                  # It is possible to implement this inventory right now, but I want to
+                  # get rid of `fleet.nix` file in the future.
+                  # children.secrets = { };
+                })
+                output;
+            };
+          };
+        };
       };
       # Supported and tested list of deployment targets.
       systems = ["x86_64-linux" "aarch64-linux" "armv7l-linux" "armv6l-linux"];
@@ -108,6 +133,7 @@
           # `fleet` crate wants nightly rust, also little sense of supporting it on stable nixpkgs.
           (prefixAttrs "nixpkgs-" (removeAttrs packages ["fleet"]))
           // (prefixAttrs "nixpkgs-stable-" (removeAttrs packages-with-nixpkgs-stable ["fleet"]));
+        formatter = pkgs.alejandra;
       };
     };
 }

@@ -1,4 +1,3 @@
-
 {craneLib}:
 craneLib.buildPackage rec {
   pname = "fleet-generator-helper";
@@ -9,6 +8,6 @@ craneLib.buildPackage rec {
   cargoExtraArgs = "--locked -p ${pname}";
 
   postInstall = ''
-		mv bin/${pname} bin/genhelper
+    mv bin/${pname} bin/genhelper
   '';
 }

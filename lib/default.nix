@@ -1,6 +1,4 @@
-{
-  fleetPkgsForPkgs,
-}: {
+{fleetPkgsForPkgs}: {
   fleetConfiguration = {
     # TODO: Provide by fleet, instead of requesting user to provide it.
     # This is not good that user needs to provide it, as it becomes a flake data, and fleet arbitrarily rewriting it
