@@ -8,6 +8,6 @@ craneLib.buildPackage rec {
   cargoExtraArgs = "--locked -p ${pname}";
 
   postInstall = ''
-    mv bin/${pname} bin/genhelper
+    ln -s $out/bin/${pname} $out/bin/gh
   '';
 }

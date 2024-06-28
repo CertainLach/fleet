@@ -95,7 +95,7 @@ impl ConfigHost {
 		let out = cmd.run_string().await?;
 		let mut lines = out.split('\n');
 		if let Some(last) = lines.next_back() {
-			ensure!(last == "", "output of ls should end with newline");
+			ensure!(last.is_empty(), "output of ls should end with newline");
 		}
 		Ok(lines.map(ToOwned::to_owned).collect())
 	}

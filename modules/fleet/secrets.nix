@@ -130,85 +130,81 @@ in {
     overlays = [
       (final: prev: let
         lib = final.lib;
-        inherit (lib) strings concatMap;
-        inherit (strings) escapeShellArgs;
+        inherit (lib) strings;
+        inherit (strings) concatStringsSep;
       in {
-        mkEncryptSecret = {
-          rage ? prev.rage,
-          recipients,
-        }:
-          prev.writeShellScript "encryptor" ''
-            #!/bin/sh
-            exec ${rage}/bin/rage ${escapeShellArgs (concatMap (r: ["-r" r]) recipients)} -e "$@"
-          '';
-        # TODO: Move to fleet
-        # TODO: Merge both generators to one with consistent options syntax?
-        # Impure generator is built on local machine, then built closure is copied to remote machine,
-        # and then it is ran in inpure context, so that this generator may access HSMs and other things.
-        mkImpureSecretGenerator = {
-          script,
-          # If set - script will be run on remote machine, otherwise it will be run with fleet project in CWD
-          # (Some secrets-encryption-in-git/managed PKI solution is expected)
-          impureOn ? null,
-        }:
-          (prev.writeShellScript "impureGenerator.sh" ''
-            #!/bin/sh
-            set -eu
+        mkSecretGenerators = {recipients}: rec {
+          # TODO: Merge both generators to one with consistent options syntax?
+          # Impure generator is built on local machine, then built closure is copied to remote machine,
+          # and then it is ran in inpure context, so that this generator may access HSMs and other things.
+          mkImpureSecretGenerator = {
+            script,
+            # If set - script will be run on remote machine, otherwise it will be run with fleet project in CWD
+            # (Some secrets-encryption-in-git/managed PKI solution is expected)
+            impureOn ? null,
+          }:
+            (prev.writeShellScript "impureGenerator.sh" ''
+              #!/bin/sh
+              set -eu
 
-            # TODO: Provide tempdir from outside, to make it securely erasurable as needed?
-            tmp=$(mktemp -d)
-            cd $tmp
-            # cd /var/empty
+              export GENERATOR_HELPER_IDENTITIES="${concatStringsSep "\n" recipients}";
+              export PATH=${final.fleet-generator-helper}/bin:$PATH
 
-            created_at=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+              # TODO: Provide tempdir from outside, to make it securely erasurable as needed?
+              tmp=$(mktemp -d)
+              cd $tmp
+              # cd /var/empty
 
-            ${script}
+              created_at=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
 
-            if ! test -d $out; then
-              echo "impure generator script did not produce expected \$out output"
-              exit 1
-            fi
+              ${script}
 
-            echo -n $created_at > $out/created_at
-            echo -n SUCCESS > $out/marker
-          '')
-          .overrideAttrs (old: {
-            passthru = {
-              inherit impureOn;
-              generatorKind = "impure";
-            };
-          });
-        # Pure generators are disabled for now
-        mkSecretGenerator = {script}: final.mkImpureSecretGenerator {inherit script;};
+              if ! test -d $out; then
+                echo "impure generator script did not produce expected \$out output"
+                exit 1
+              fi
 
-        # TODO: Implement consistent naming
-        # Pure secret generator is supposed to be run entirely by nix, using `__impure` derivation type...
-        # But for now, it is ran the same way as `impureSecretGenerator`, but on the local machine.
-        # mkSecretGenerator = {script}:
-        #   (prev.writeShellScript "generator.sh" ''
-        #     #!/bin/sh
-        #     set -eu
-        #     # TODO: make nix daemon build secret, not just the script.
-        #     cd /var/empty
-        #
-        #     created_at=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
-        #
-        #     ${script}
-        #     if ! test -d $out; then
-        #       echo "impure generator script did not produce expected \$out output"
-        #       exit 1
-        #     fi
-        #
-        #     echo -n $created_at > $out/created_at
-        #     echo -n SUCCESS > $out/marker
-        #   '')
-        #   .overrideAttrs (old: {
-        #     passthru = {
-        #       generatorKind = "pure";
-        #     };
-        #     # TODO: make nix daemon build secret, not just the script.
-        #     # __impure = true;
-        #   });
+              echo -n $created_at > $out/created_at
+              echo -n SUCCESS > $out/marker
+            '')
+            .overrideAttrs (old: {
+              passthru = {
+                inherit impureOn;
+                generatorKind = "impure";
+              };
+            });
+          # Pure generators are disabled for now
+          mkSecretGenerator = {script}: mkImpureSecretGenerator {inherit script;};
+
+          # TODO: Implement consistent naming
+          # Pure secret generator is supposed to be run entirely by nix, using `__impure` derivation type...
+          # But for now, it is ran the same way as `impureSecretGenerator`, but on the local machine.
+          # mkSecretGenerator = {script}:
+          #   (prev.writeShellScript "generator.sh" ''
+          #     #!/bin/sh
+          #     set -eu
+          #     # TODO: make nix daemon build secret, not just the script.
+          #     cd /var/empty
+          #
+          #     created_at=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+          #
+          #     ${script}
+          #     if ! test -d $out; then
+          #       echo "impure generator script did not produce expected \$out output"
+          #       exit 1
+          #     fi
+          #
+          #     echo -n $created_at > $out/created_at
+          #     echo -n SUCCESS > $out/marker
+          #   '')
+          #   .overrideAttrs (old: {
+          #     passthru = {
+          #       generatorKind = "pure";
+          #     };
+          #     # TODO: make nix daemon build secret, not just the script.
+          #     # __impure = true;
+          #   });
+        };
       })
     ];
   };

@@ -808,10 +808,12 @@ version = "0.1.0"
 dependencies = [
  "age",
  "anyhow",
+ "base64 0.22.1",
  "clap",
  "ed25519-dalek",
  "fleet-shared",
  "rand",
+ "x25519-dalek",
 ]
 
 [[package]]

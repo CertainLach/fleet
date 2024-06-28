@@ -67,6 +67,7 @@
       perSystem = {
         config,
         system,
+        pkgs,
         ...
       }: let
         # Can also be built for darwin, through it is not usual to deploy nixos systems from macos machines.
@@ -75,14 +76,14 @@
         # It is not possible to deploy any host from armv6/armv7 hardware, and I don't think it even makes sense.
         deployerSystems = ["aarch64-linux" "x86_64-linux"];
         deployerSystem = builtins.elem system deployerSystems;
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [(rust-overlay.overlays.default)];
-        };
         lib = pkgs.lib;
         rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
         craneLib = (crane.mkLib pkgs).overrideToolchain rust;
       in {
+        _module.args.pkgs = import nixpkgs {
+          inherit system;
+          overlays = [(rust-overlay.overlays.default)];
+        };
         # Reference fleet package should be built with nightly rust, specified in rust-toolchain.toml.
         packages = lib.mkIf deployerSystem (let
           packages = import ./pkgs {

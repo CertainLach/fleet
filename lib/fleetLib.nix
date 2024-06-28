@@ -42,23 +42,46 @@ with nixpkgs.lib; rec {
 
   mkPassword = {size ? 32}: {
     coreutils,
-    encrypt,
     mkSecretGenerator,
+    ...
   }:
     mkSecretGenerator {
       script = ''
         mkdir $out
-
-        ${coreutils}/bin/tr -dc 'A-Za-z0-9!?%=' < /dev/random \
-          | ${coreutils}/bin/head -c ${toString size} \
-          | ${encrypt} > $out/secret
+        gh generate password -o $out/secret --size ${toString size}
       '';
     };
 
+  mkEd25519 = {
+    noEmbedPublic ? false,
+    encoding ? null,
+  }: {mkSecretGenerator, ...}:
+    mkSecretGenerator {
+      script = ''
+        mkdir $out
+        gh generate ed25519 -p $out/public -s $out/secret \
+          ${lib.optionalString noEmbedPublic "--no-embed-public"} \
+          ${lib.optionalString (encoding != null) "--encoding=${encoding}"}
+      '';
+    };
+
+  mkGarage = {}: mkEd25519 {noEmbedPublic = true;};
+
+  mkX25519 = {encoding ? null}: {mkSecretGenerator, ...}:
+    mkSecretGenerator {
+      script = ''
+        mkdir $out
+        gh generate x25519 -p $out/public -s $out/secret \
+          ${lib.optionalString (encoding != null) "--encoding=${encoding}"}
+      '';
+    };
+
+  mkWireguard = {}: mkX25519 {encoding = "base64";};
+
   mkRsa = {size ? 4096}: {
     openssl,
-    encrypt,
     mkSecretGenerator,
+    ...
   }:
     mkSecretGenerator {
       script = ''
@@ -67,8 +90,8 @@ with nixpkgs.lib; rec {
         ${openssl}/bin/openssl genrsa -out rsa_private.key ${toString size}
         ${openssl}/bin/openssl rsa -in rsa_private.key -pubout -out rsa_public.key
 
-        sudo cat rsa_private.key | ${encrypt} > $out/secret
-        sudo cat rsa_public.key > $out/public
+        cat rsa_private.key | gh private -o $out/secret
+        cat rsa_public.key | gh public -o $out/public
       '';
     };
 }

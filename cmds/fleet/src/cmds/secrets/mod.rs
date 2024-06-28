@@ -40,9 +40,6 @@ pub enum Secret {
 		/// Secret public part
 		#[clap(long)]
 		public: Option<String>,
-		/// How to name public secret part
-		#[clap(long, default_value = "public")]
-		public_name: String,
 		/// Load public part from specified file
 		#[clap(long)]
 		public_file: Option<PathBuf>,
@@ -55,14 +52,19 @@ pub enum Secret {
 		#[clap(long)]
 		re_add: bool,
 
-		#[clap(default_value = "secret")]
-		part_name: String,
+		/// How to name public secret part
+		#[clap(long, short = 'p', default_value = "public")]
+		public_part: String,
+		/// How to name private secret part
+		#[clap(short = 's', long, default_value = "secret")]
+		part: String,
 	},
 	/// Add secret, data should be provided in stdin
 	Add {
 		/// Secret name
 		name: String,
-		/// Secret owners
+		/// Secret owner
+		#[clap(short = 'm', long)]
 		machine: String,
 		/// Override secret if already present
 		#[clap(long)]
@@ -70,41 +72,41 @@ pub enum Secret {
 		/// Secret public part
 		#[clap(long)]
 		public: Option<String>,
-		/// How to name public secret part
-		#[clap(long, default_value = "public")]
-		public_name: String,
 		/// Load public part from specified file
 		#[clap(long)]
 		public_file: Option<PathBuf>,
 
-		#[clap(default_value = "secret")]
-		part_name: String,
+		/// How to name public secret part
+		#[clap(short = 'p', long, default_value = "public")]
+		public_part: String,
+		/// How to name private secret part
+		#[clap(short = 's', long, default_value = "secret")]
+		part: String,
 	},
 	/// Read secret from remote host, requires sudo on said host
 	Read {
 		name: String,
+		#[clap(short = 'm', long)]
 		machine: String,
 
-		#[clap(default_value = "secret")]
-		part_name: String,
+		/// Which private secret part to read
+		#[clap(short = 'p', long, default_value = "secret")]
+		part: String,
 	},
 	UpdateShared {
 		name: String,
 
-		#[clap(long)]
-		machines: Option<Vec<String>>,
+		#[clap(short = 'm', long)]
+		machine: Option<Vec<String>>,
 
 		#[clap(long)]
-		add_machines: Vec<String>,
+		add_machine: Vec<String>,
 		#[clap(long)]
-		remove_machines: Vec<String>,
+		remove_machine: Vec<String>,
 
 		/// Which host should we use to decrypt
 		#[clap(long)]
 		prefer_identities: Vec<String>,
-
-		#[clap(default_value = "secret")]
-		part_name: String,
 	},
 	Regenerate {
 		/// Which host should we use to decrypt, in case if reencryption is required, without
@@ -115,13 +117,15 @@ pub enum Secret {
 	List {},
 	Edit {
 		name: String,
+		#[clap(short = 'm', long)]
 		machine: String,
-
-		#[clap(default_value = "secret")]
-		part: String,
 
 		#[clap(long)]
 		add: bool,
+
+		/// Which private secret part to read
+		#[clap(short = 'p', long, default_value = "secret")]
+		part: String,
 	},
 }
 
@@ -220,21 +224,18 @@ async fn generate_impure(
 	};
 	let on_pkgs = host.pkgs().await?;
 	let call_package = nix_go!(on_pkgs.callPackage);
-	let mk_encrypt_secret = nix_go!(on_pkgs.mkEncryptSecret);
+	let mk_secret_generators = nix_go!(on_pkgs.mkSecretGenerators);
 
 	let mut recipients = Vec::new();
 	for owner in owners {
 		let key = config.key(owner).await?;
 		recipients.push(key);
 	}
-	let encrypt = nix_go!(mk_encrypt_secret(Obj {
+	let generators = nix_go!(mk_secret_generators(Obj {
 		recipients: { recipients },
 	}));
 
-	let generator = nix_go!(call_package(generator)(Obj {
-		encrypt,
-		// rustfmt_please_newline
-	}));
+	let generator = nix_go!(call_package(generator)(generators));
 
 	let generator = generator.build().await?;
 	let generator = generator
@@ -305,6 +306,7 @@ async fn generate(
 	}
 	let default_pkgs = &config.default_pkgs;
 	let default_call_package = nix_go!(default_pkgs.callPackage);
+	let default_mk_secret_generators = nix_go!(default_pkgs.mkSecretGenerators);
 	// Generators provide additional information in passthru, to access
 	// passthru we should call generator, but information about where this generator is supposed to build
 	// is located in passthru... Thus evaluating generator on host.
@@ -313,10 +315,10 @@ async fn generate(
 	//
 	// I don't want to make modules always responsible for additional secret data anyway,
 	// so it should be in derivation, and not in the secret data itself.
-	let default_generator = nix_go!(default_call_package(generator)(Obj {
-		encrypt: { "exit 1" },
-		// rustfmt_please_newline
+	let generators = nix_go!(default_mk_secret_generators(Obj {
+		recipients: { <Vec<String>>::new() },
 	}));
+	let default_generator = nix_go!(default_call_package(generator)(generators));
 
 	let kind: GeneratorKind = nix_go_json!(default_generator.generatorKind);
 
@@ -442,11 +444,11 @@ impl Secret {
 				name,
 				force,
 				public,
-				public_name,
+				public_part: public_name,
 				public_file,
 				expires_at,
 				re_add,
-				part_name,
+				part: part_name,
 			} => {
 				// TODO: Forbid updating secrets with set expectedOwners (= not user-managed).
 
@@ -500,9 +502,9 @@ impl Secret {
 				name,
 				force,
 				public,
-				public_name,
+				public_part: public_name,
 				public_file,
-				part_name,
+				part: part_name,
 			} => {
 				if config.has_secret(&machine, &name) && !force {
 					bail!("secret already defined");
@@ -535,7 +537,7 @@ impl Secret {
 			Secret::Read {
 				name,
 				machine,
-				part_name,
+				part: part_name,
 			} => {
 				let secret = config.host_secret(&machine, &name)?;
 				let Some(secret) = secret.parts.get(&part_name) else {
@@ -552,25 +554,24 @@ impl Secret {
 			}
 			Secret::UpdateShared {
 				name,
-				machines,
-				add_machines,
-				remove_machines,
+				machine,
+				add_machine,
+				remove_machine,
 				prefer_identities,
-				part_name,
 			} => {
 				// TODO: Forbid updating secrets with set expectedOwners (= not user-managed).
 
 				let secret = config.shared_secret(&name)?;
-				if secret.secret.parts.get(&part_name).is_none() {
+				if secret.secret.parts.values().all(|v| !v.raw.encrypted) {
 					bail!("no secret");
 				}
 
 				let initial_machines = secret.owners.clone();
 				let target_machines = parse_machines(
 					initial_machines.clone(),
-					machines,
-					add_machines,
-					remove_machines,
+					machine,
+					add_machine,
+					remove_machine,
 				)?;
 
 				if target_machines.is_empty() {

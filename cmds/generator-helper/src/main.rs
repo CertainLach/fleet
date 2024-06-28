@@ -1,34 +1,125 @@
 use std::{
-	fs,
-	io::{self, stdout, Cursor, Read, Write},
-	path::PathBuf,
+	env,
+	fs::{File, OpenOptions},
+	io::{copy, Read, Write},
 	str::FromStr,
 };
 
-use age::Recipient;
+use age::{
+	ssh::{ParseRecipientKeyError, Recipient as SshRecipient},
+	Encryptor, Recipient,
+};
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use clap::Parser;
-use ed25519_dalek::SigningKey;
+use clap::{Parser, ValueEnum};
 use fleet_shared::SecretData;
 use rand::{
 	distributions::{Alphanumeric, DistString, Distribution, Uniform},
-	rngs::OsRng,
-	thread_rng, Rng,
+	thread_rng,
 };
 
-fn write_output(out: &str, data: impl AsRef<[u8]>, stdout_marker: &mut bool) -> Result<()> {
-	let data = data.as_ref();
-	if out == "-" {
-		let mut stdout = stdout();
-		if *stdout_marker {
-			stdout.write_all(&[b'\n'])?;
+fn write_output_file(out: &str) -> Result<File> {
+	let file = OpenOptions::new()
+		.create_new(true)
+		.write(true)
+		.open(out)
+		.with_context(|| format!("failed to open output {out:?}"))?;
+	Ok(file)
+}
+fn write_public(out: &str, mut input: impl Read, encoding: OutputEncoding) -> Result<()> {
+	let mut output = write_output_file(out)?;
+
+	let mut data = Vec::new();
+	copy(&mut input, &mut wrap_encoder(&mut data, encoding))?;
+
+	output.write_all(
+		SecretData {
+			data,
+			encrypted: false,
 		}
-		*stdout_marker = true;
-		stdout.write_all(data)?;
-	} else {
-		fs::write(out, data)?;
-	};
+		.to_string()
+		.as_bytes(),
+	)?;
 	Ok(())
+}
+fn write_private(
+	identities: &Identities,
+	out: &str,
+	mut input: impl Read,
+	encoding: OutputEncoding,
+) -> Result<()> {
+	let mut output = write_output_file(out)?;
+	let encryptor = make_encryptor(identities)?;
+
+	let mut data = Vec::new();
+	{
+		let mut encrypted_writer = encryptor.wrap_output(&mut data)?;
+		copy(
+			&mut input,
+			&mut wrap_encoder(&mut encrypted_writer, encoding),
+		)?;
+		encrypted_writer.finish()?;
+	};
+
+	output.write_all(
+		SecretData {
+			data,
+			encrypted: true,
+		}
+		.to_string()
+		.as_bytes(),
+	)?;
+	Ok(())
+}
+
+type Identities = Vec<SshRecipient>;
+fn load_identities() -> Result<Identities> {
+	let list = env::var("GENERATOR_HELPER_IDENTITIES");
+	let list = match list {
+		Ok(v) => v,
+		Err(env::VarError::NotPresent) => {
+			bail!("gh is only intended to be used from secret generator scripts, but if you really want to use it somewhere else - set GENERATOR_HELPER_IDENTITIES to list of newline-delimited ssh identities");
+		}
+		Err(e) => bail!("somehow, identities list is not utf-8: {e}"),
+	};
+	let list = list.trim();
+	ensure!(!list.is_empty(), "no identities passed, can't encrypt data");
+	list.lines()
+		.map(age::ssh::Recipient::from_str)
+		.collect::<Result<Identities, ParseRecipientKeyError>>()
+		.map_err(|e| anyhow!("parse recipients: {e:?}"))
+}
+fn make_encryptor(r: &Identities) -> Result<Encryptor> {
+	Ok(Encryptor::with_recipients(
+		r.iter()
+			.map(|v| {
+				let coerced: Box<dyn Recipient + Send> = Box::new(v.clone());
+				coerced
+			})
+			.collect(),
+	)
+	.expect("list is not empty"))
+}
+fn wrap_encoder<'t>(w: impl Write + 't, encoding: OutputEncoding) -> impl Write + 't {
+	fn coerce<'t>(w: impl Write + 't) -> Box<dyn Write + 't> {
+		Box::new(w)
+	}
+	match encoding {
+		OutputEncoding::Raw => coerce(w),
+		OutputEncoding::Base64 => {
+			use base64::engine::general_purpose::STANDARD;
+			let writer = base64::write::EncoderWriter::new(w, &STANDARD);
+			coerce(writer)
+		}
+	}
+}
+
+#[derive(Clone, Copy, ValueEnum, Default)]
+enum OutputEncoding {
+	/// Do not encode data, store as is.
+	#[default]
+	Raw,
+	/// Encode as base64 (with padding).
+	Base64,
 }
 
 #[derive(Parser)]
@@ -36,17 +127,35 @@ enum Generate {
 	/// Generate public, private keys without wrapping, in standard ed25519 schema
 	/// (64 bytes private (due to merge with private), 32 bytes public)
 	Ed25519 {
+		#[arg(long, short = 'p')]
 		public: String,
+		#[arg(long, short = 's')]
 		private: String,
 		/// Private key should be just the private key (32 bytes), not standard private+public.
 		#[arg(long)]
 		no_embed_public: bool,
+		#[arg(long, short = 'e', value_enum, default_value_t)]
+		encoding: OutputEncoding,
+	},
+	/// Generate public, private keys without wrapping, in standard x25519 schema
+	/// (32 bytes private, 32 bytes public)
+	X25519 {
+		#[arg(long, short = 'p')]
+		public: String,
+		#[arg(long, short = 's')]
+		private: String,
+		#[arg(long, short = 'e', value_enum, default_value_t)]
+		encoding: OutputEncoding,
 	},
 	Password {
+		#[arg(long, short = 'o')]
 		output: String,
+		#[arg(long)]
 		size: usize,
 		#[arg(long, short = 'n')]
 		no_symbols: bool,
+		#[arg(long, short = 'e', value_enum, default_value_t)]
+		encoding: OutputEncoding,
 	},
 }
 
@@ -54,15 +163,17 @@ enum Generate {
 enum Opts {
 	/// Encode public part from stdin.
 	Public {
-		#[arg(long)]
-		allow_empty: bool,
+		#[arg(long, short = 'o')]
+		output: String,
+		#[arg(long, short = 'e', value_enum, default_value_t)]
+		encoding: OutputEncoding,
 	},
 	/// Encrypt private part from stdin.
 	Private {
-		#[arg(long)]
-		allow_empty: bool,
-		#[arg(short = 'r')]
-		recipient: Vec<String>,
+		#[arg(long, short = 'o')]
+		output: String,
+		#[arg(long, short = 'e', value_enum, default_value_t)]
+		encoding: OutputEncoding,
 	},
 	/// Generate keys in well-known schemas.
 	///
@@ -70,41 +181,6 @@ enum Opts {
 	/// otherwise you should ensure noone is able to read generated files, they don't have any mode set by default.
 	#[command(subcommand)]
 	Generate(Generate),
-	// Generate {
-	// 	kind: GenerateKind,
-	// 	/// Different generators generate different number of files, you need to specify number of outputs corresponding to the generator.
-	// 	#[arg(short = 'o')]
-	// 	outputs: Vec<String>,
-	// },
-}
-
-fn parse_stdin() -> Result<Option<Vec<u8>>> {
-	let mut input = vec![];
-	io::stdin().read_to_end(&mut input)?;
-	if input.is_empty() {
-		Ok(None)
-	} else {
-		Ok(Some(input))
-	}
-}
-pub fn encrypt_secret_data(
-	recipients: impl IntoIterator<Item = impl Recipient + Send + 'static>,
-	data: Vec<u8>,
-) -> Option<SecretData> {
-	let mut encrypted = vec![];
-	let recipients = recipients
-		.into_iter()
-		.map(|v| Box::new(v) as Box<dyn Recipient + Send>)
-		.collect::<Vec<_>>();
-	let mut encryptor = age::Encryptor::with_recipients(recipients)?
-		.wrap_output(&mut encrypted)
-		.expect("in memory write");
-	io::copy(&mut Cursor::new(data), &mut encryptor).expect("in memory copy");
-	encryptor.finish().expect("in memory flush");
-	Some(SecretData {
-		data: encrypted,
-		encrypted: true,
-	})
 }
 
 fn main() -> Result<()> {
@@ -113,56 +189,26 @@ fn main() -> Result<()> {
 	let mut rng = thread_rng();
 
 	match opts {
-		Opts::Public { allow_empty } => {
-			let stdin = parse_stdin()?;
-			if stdin.is_none() && !allow_empty {
-				bail!("empty stdin input is not allowed unless --allow-empty is set");
-			}
-			let stdin = stdin.unwrap_or_default();
-			io::stdout().write_all(
-				SecretData {
-					data: stdin,
-					encrypted: false,
-				}
-				.to_string()
-				.as_bytes(),
-			)?;
+		Opts::Public { output, encoding } => {
+			write_public(&output, std::io::stdin(), encoding)?;
 		}
-		Opts::Private {
-			allow_empty,
-			recipient,
-		} => {
-			let stdin = parse_stdin()?;
-			if stdin.is_none() && !allow_empty {
-				bail!("empty stdin input is not allowed unless --allow-empty is set");
-			}
-			let stdin = stdin.unwrap_or_default();
-			if recipient.is_empty() {
-				bail!("recipient list is empty");
-			}
-			let out = encrypt_secret_data(
-				recipient
-					.into_iter()
-					.map(|r| age::ssh::Recipient::from_str(&r))
-					.collect::<Result<Vec<age::ssh::Recipient>, age::ssh::ParseRecipientKeyError>>()
-					.map_err(|e| anyhow!("parse recipients: {e:?}"))?,
-				stdin,
-			)
-			.expect("got recipients");
-			io::stdout().write_all(out.to_string().as_bytes())?;
+		Opts::Private { output, encoding } => {
+			let recipients = load_identities()?;
+			write_private(&recipients, &output, std::io::stdin(), encoding)?;
 		}
 		Opts::Generate(gen) => {
-			let mut stdout_marker: bool = false;
 			match gen {
 				Generate::Ed25519 {
 					public,
 					private,
 					no_embed_public,
+					encoding,
 				} => {
-					let key = SigningKey::generate(&mut rng).to_keypair_bytes();
-
-					write_output(&public, &key[32..], &mut stdout_marker).context("public")?;
-					write_output(
+					let recipients = load_identities()?;
+					let key = ed25519_dalek::SigningKey::generate(&mut rng).to_keypair_bytes();
+					write_public(&public, &key[32..], encoding)?;
+					write_private(
+						&recipients,
 						&private,
 						&key[..{
 							if no_embed_public {
@@ -171,19 +217,31 @@ fn main() -> Result<()> {
 								64
 							}
 						}],
-						&mut stdout_marker,
-					)
-					.context("private")?;
+						encoding,
+					)?;
+				}
+				Generate::X25519 {
+					public,
+					private,
+					encoding,
+				} => {
+					let recipients = load_identities()?;
+					let key = x25519_dalek::StaticSecret::random_from_rng(rng);
+					let public_key: x25519_dalek::PublicKey = (&key).into();
+					write_public(&public, public_key.as_bytes().as_slice(), encoding)?;
+					write_private(&recipients, &private, key.as_bytes().as_slice(), encoding)?;
 				}
 				Generate::Password {
 					size,
 					no_symbols,
 					output,
+					encoding,
 				} => {
 					ensure!(
 						size >= 6,
 						"misconfiguration? password is shorter than 6 chars"
 					);
+					let recipients = load_identities()?;
 					let out = if no_symbols {
 						Alphanumeric.sample_string(&mut rng, size)
 					} else {
@@ -195,7 +253,7 @@ fn main() -> Result<()> {
 							.map(|i| GEN_ASCII_SYMBOLS[i] as char)
 							.collect::<String>()
 					};
-					write_output(&output, out, &mut stdout_marker)?;
+					write_private(&recipients, &output, out.as_bytes(), encoding)?;
 				}
 			}
 		}
