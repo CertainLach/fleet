@@ -119,9 +119,21 @@ in {
   };
   config = {
     environment.systemPackages = [pkgs.fleet-install-secrets];
-    system.activationScripts.decryptSecrets = stringAfter ["users" "groups" "specialfs"] ''
-      1>&2 echo "setting up secrets"
-      ${pkgs.fleet-install-secrets}/bin/fleet-install-secrets install ${secretsFile}
-    '';
+    system.activationScripts.decryptSecrets =
+      stringAfter (
+        [
+          # secrets are owned by user/group, thus we need to refer to those
+          "users"
+          "groups"
+          "specialfs"
+        ]
+        # nixos-impermanence compatibility: secrets are encrypted by host-key,
+        # but with impermanence we expect that the host-key is installed by
+        # persist-file activation script.
+        ++ (lib.optional (config.system.activationScripts ? "persist-file") "persist-file")
+      ) ''
+        1>&2 echo "setting up secrets"
+        ${pkgs.fleet-install-secrets}/bin/fleet-install-secrets install ${secretsFile}
+      '';
   };
 }
