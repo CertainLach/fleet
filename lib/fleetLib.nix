@@ -60,19 +60,25 @@ with nixpkgs.lib; rec {
       script = ''
         mkdir $out
         gh generate ed25519 -p $out/public -s $out/secret \
-          ${lib.optionalString noEmbedPublic "--no-embed-public"} \
-          ${lib.optionalString (encoding != null) "--encoding=${encoding}"}
+          ${optionalString noEmbedPublic "--no-embed-public"} \
+          ${optionalString (encoding != null) "--encoding=${encoding}"}
       '';
     };
 
-  mkGarage = {}: mkEd25519 {noEmbedPublic = true;};
+  mkGarage = {}: {mkSecretGenerator, ...}: mkSecretGenerator {
+    script = ''
+      mkdir $out
+      gh generate ed25519 -p $out/public -s $out/secret
+      gh decode -i $out/public | gh public -e hex -o $out/node_id
+    '';
+  };
 
   mkX25519 = {encoding ? null}: {mkSecretGenerator, ...}:
     mkSecretGenerator {
       script = ''
         mkdir $out
         gh generate x25519 -p $out/public -s $out/secret \
-          ${lib.optionalString (encoding != null) "--encoding=${encoding}"}
+          ${optionalString (encoding != null) "--encoding=${encoding}"}
       '';
     };
 
