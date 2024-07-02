@@ -1,7 +1,7 @@
 use std::{
 	env,
 	fs::{File, OpenOptions},
-	io::{copy, Read, Write},
+	io::{self, copy, stdin, stdout, Read, Write},
 	str::FromStr,
 };
 
@@ -106,9 +106,28 @@ fn wrap_encoder<'t>(w: impl Write + 't, encoding: OutputEncoding) -> impl Write 
 	match encoding {
 		OutputEncoding::Raw => coerce(w),
 		OutputEncoding::Base64 => {
-			use base64::engine::general_purpose::STANDARD;
-			let writer = base64::write::EncoderWriter::new(w, &STANDARD);
+			use base64::{engine::general_purpose::STANDARD, write::EncoderWriter};
+
+			let writer = EncoderWriter::new(w, &STANDARD);
 			coerce(writer)
+		}
+		OutputEncoding::Hex => {
+			struct HexWriter<W>(W);
+			impl<W> Write for HexWriter<W>
+			where
+				W: Write,
+			{
+				fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+					let encoded = hex::encode(buf);
+					self.0.write_all(encoded.as_bytes())?;
+					Ok(buf.len())
+				}
+
+				fn flush(&mut self) -> io::Result<()> {
+					self.0.flush()
+				}
+			}
+			coerce(HexWriter(w))
 		}
 	}
 }
@@ -120,6 +139,8 @@ enum OutputEncoding {
 	Raw,
 	/// Encode as base64 (with padding).
 	Base64,
+	/// Encode as hex (without leading 0x)
+	Hex,
 }
 
 #[derive(Parser)]
@@ -175,6 +196,14 @@ enum Opts {
 		#[arg(long, short = 'e', value_enum, default_value_t)]
 		encoding: OutputEncoding,
 	},
+	/// Sometimes you also need to reencode secret, this command allows you to get raw data from
+	/// secret encoded using `gh public`... I would like if I knew a better design for some sort of
+	/// such thing. Ideally there should be no need to decode secrets back, but garage wants both
+	/// raw pubkey and raw secret key, yet also requires node id which is hex-reencoded public key.
+	Decode {
+		#[arg(long, short = 'i')]
+		input: String,
+	},
 	/// Generate keys in well-known schemas.
 	///
 	/// Note that this command is only intended to be used in fleet secret generator,
@@ -190,11 +219,11 @@ fn main() -> Result<()> {
 
 	match opts {
 		Opts::Public { output, encoding } => {
-			write_public(&output, std::io::stdin(), encoding)?;
+			write_public(&output, stdin(), encoding)?;
 		}
 		Opts::Private { output, encoding } => {
 			let recipients = load_identities()?;
-			write_private(&recipients, &output, std::io::stdin(), encoding)?;
+			write_private(&recipients, &output, stdin(), encoding)?;
 		}
 		Opts::Generate(gen) => {
 			match gen {
@@ -204,8 +233,10 @@ fn main() -> Result<()> {
 					no_embed_public,
 					encoding,
 				} => {
+					use ed25519_dalek::SigningKey;
+
 					let recipients = load_identities()?;
-					let key = ed25519_dalek::SigningKey::generate(&mut rng).to_keypair_bytes();
+					let key = SigningKey::generate(&mut rng).to_keypair_bytes();
 					write_public(&public, &key[32..], encoding)?;
 					write_private(
 						&recipients,
@@ -225,9 +256,11 @@ fn main() -> Result<()> {
 					private,
 					encoding,
 				} => {
+					use x25519_dalek::{PublicKey, StaticSecret};
+
 					let recipients = load_identities()?;
-					let key = x25519_dalek::StaticSecret::random_from_rng(rng);
-					let public_key: x25519_dalek::PublicKey = (&key).into();
+					let key = StaticSecret::random_from_rng(rng);
+					let public_key: PublicKey = (&key).into();
 					write_public(&public, public_key.as_bytes().as_slice(), encoding)?;
 					write_private(&recipients, &private, key.as_bytes().as_slice(), encoding)?;
 				}
@@ -256,6 +289,20 @@ fn main() -> Result<()> {
 					write_private(&recipients, &output, out.as_bytes(), encoding)?;
 				}
 			}
+		}
+		Opts::Decode { input } => {
+			let mut data = Vec::new();
+			File::open(input)?.read_to_end(&mut data)?;
+			let data = String::from_utf8(data).context(
+				"encoded data is always utf-8, you are trying to use decode the wrong way.",
+			)?;
+			let data =
+				SecretData::from_str(&data).map_err(|e| anyhow!("failed to decode data: {e}"))?;
+			ensure!(
+				!data.encrypted,
+				"you can not decrypt secret data, only decode public."
+			);
+			stdout().write_all(&data.data)?;
 		}
 	}
 	Ok(())
