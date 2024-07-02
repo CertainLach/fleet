@@ -166,13 +166,16 @@ fn init_secret(identity: &age::ssh::Identity, value: &DataItem) -> Result<()> {
 			fs::create_dir(root_path).context("failed to create secret directory")?;
 		}
 	}
+	let mut errored = false;
 	for (part_id, part) in value.parts.iter() {
 		let _span = info_span!("part", part_id = part_id);
 		if let Err(e) = init_part(identity, value, part) {
 			error!("failed to init part {part_id}: {e}");
+			errored = true;
 		}
 	}
 
+	ensure!(!errored, "some secret parts have failed to initialize");
 	Ok(())
 }
 
