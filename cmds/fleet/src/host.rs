@@ -130,7 +130,7 @@ impl ConfigHost {
 			.await
 			.context("failed to call remote host for decrypt")?;
 		let data: SecretData = encoded.parse().map_err(|e| anyhow!("{e}"))?;
-		ensure!(!data.encrypted, "didn't decrypted secret");
+		ensure!(!data.encrypted, "secret came out encrypted");
 		Ok(data.data)
 	}
 	pub async fn reencrypt(&self, data: SecretData, targets: Vec<String>) -> Result<SecretData> {
@@ -147,7 +147,7 @@ impl ConfigHost {
 			.await
 			.context("failed to call remote host for decrypt")?;
 		let data: SecretData = encoded.parse().map_err(|e| anyhow!("{e}"))?;
-		ensure!(!data.encrypted, "didn't decrypted secret");
+		ensure!(data.encrypted, "secret came out not encrypted");
 		Ok(data)
 	}
 	/// Returns path for futureproofing, as path might change i.e on conversion to CA

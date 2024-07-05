@@ -5,7 +5,7 @@
   ...
 }:
 with lib; let
-  inherit (lib.strings) hasPrefix stripPrefix;
+  inherit (lib.strings) hasPrefix removePrefix;
   plaintextPrefix = "<PLAINTEXT>";
   plaintextNewlinePrefix = "<PLAINTEXT-NL>";
 
@@ -40,9 +40,9 @@ with lib; let
         hash = mkOptionDefault (builtins.hashString "sha1" config.raw);
         data = mkOptionDefault (
           if hasPrefix plaintextPrefix config.raw
-          then stripPrefix plaintextPrefix config.raw
+          then removePrefix plaintextPrefix config.raw
           else if hasPrefix plaintextNewlinePrefix config.raw
-          then stripPrefix plaintextNewlinePrefix config.raw
+          then removePrefix plaintextNewlinePrefix config.raw
           else throw "secret.part.data attribute only works for public plaintext secret parts, got ${config.raw}"
         );
         path = mkOptionDefault "/run/secrets/${secretName}/${config.hash}-${partName}";
