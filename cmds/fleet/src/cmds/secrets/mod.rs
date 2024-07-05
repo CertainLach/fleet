@@ -66,9 +66,12 @@ pub enum Secret {
 		/// Secret owner
 		#[clap(short = 'm', long)]
 		machine: String,
-		/// Override secret if already present
+		/// Replace secret if already present
 		#[clap(long)]
-		force: bool,
+		replace: bool,
+		/// Add new parts to existing secret
+		#[clap(long)]
+		merge: bool,
 		/// Secret public part
 		#[clap(long)]
 		public: Option<String>,
@@ -500,38 +503,53 @@ impl Secret {
 			Secret::Add {
 				machine,
 				name,
-				force,
+				replace,
+				merge,
 				public,
 				public_part: public_name,
 				public_file,
 				part: part_name,
 			} => {
-				if config.has_secret(&machine, &name) && !force {
-					bail!("secret already defined");
+				if config.has_secret(&machine, &name) && !replace && !merge {
+					bail!("secret already defined.\nUse --replace to override, or --merge to add new parts to existing secret");
 				}
 
-				let mut parts = BTreeMap::new();
+				let mut out = if merge && !replace {
+					config
+						.host_secret(&machine, &name)
+						.context("failed to read existing secret for --merge")?
+				} else {
+					FleetSecret {
+						created_at: Utc::now(),
+						expires_at: None,
+						parts: BTreeMap::new(),
+					}
+				};
 
 				if let Some(secret) = parse_secret().await? {
 					let recipient = config.recipient(&machine).await?;
 					let encrypted =
 						encrypt_secret_data(vec![recipient], secret).expect("recipient provided");
-					parts.insert(part_name, FleetSecretPart { raw: encrypted });
+					if out
+						.parts
+						.insert(part_name.clone(), FleetSecretPart { raw: encrypted })
+						.is_some() && !replace
+					{
+						bail!("part {part_name:?} is already defined");
+					}
 				}
 
 				if let Some(public) = parse_public(public, public_file).await? {
-					parts.insert(public_name, FleetSecretPart { raw: public });
+					if out
+						.parts
+						.insert(public_name.clone(), FleetSecretPart { raw: public })
+						.is_some() && !replace
+					{
+						bail!("part {public_name:?} is already defined");
+					}
 				};
 
-				config.insert_secret(
-					&machine,
-					name,
-					FleetSecret {
-						created_at: Utc::now(),
-						expires_at: None,
-						parts,
-					},
-				);
+				config.insert_secret(&machine, name, out);
 			}
 			#[allow(clippy::await_holding_refcell_ref)]
 			Secret::Read {
