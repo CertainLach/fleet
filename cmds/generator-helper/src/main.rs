@@ -14,7 +14,7 @@ use clap::{Parser, ValueEnum};
 use fleet_shared::SecretData;
 use rand::{
 	distributions::{Alphanumeric, DistString, Distribution, Uniform},
-	thread_rng,
+	thread_rng, RngCore,
 };
 
 fn write_output_file(out: &str) -> Result<File> {
@@ -178,6 +178,17 @@ enum Generate {
 		#[arg(long, short = 'e', value_enum, default_value_t)]
 		encoding: OutputEncoding,
 	},
+	Bytes {
+		#[arg(long, short = 'o')]
+		output: String,
+		#[arg(long, short = 'c')]
+		count: usize,
+		/// Ensure there is no NULs in bytestring.
+		#[arg(long)]
+		no_nuls: bool,
+		#[arg(long, short = 'e', value_enum, default_value_t)]
+		encoding: OutputEncoding,
+	},
 }
 
 #[derive(Parser)]
@@ -208,6 +219,9 @@ enum Opts {
 	///
 	/// Note that this command is only intended to be used in fleet secret generator,
 	/// otherwise you should ensure noone is able to read generated files, they don't have any mode set by default.
+	///
+	/// Fleet also doesn't zeroize memory/assumes good OsRng/makes other assumptions, which makes it only suitable to
+	/// be used in nix sandbox.
 	#[command(subcommand)]
 	Generate(Generate),
 }
@@ -287,6 +301,28 @@ fn main() -> Result<()> {
 							.collect::<String>()
 					};
 					write_private(&recipients, &output, out.as_bytes(), encoding)?;
+				}
+				Generate::Bytes {
+					output,
+					count,
+					no_nuls,
+					encoding,
+				} => {
+					ensure!(
+						count >= 6,
+						"misconfiguration? bytestring is shorter than 6 chars"
+					);
+					let recipients = load_identities()?;
+					let mut bytes = vec![0u8; count];
+					if no_nuls {
+						let rand = Uniform::new_inclusive(0x1u8, 0xffu8).sample_iter(&mut rng);
+						for (byte, rand) in bytes.iter_mut().zip(rand) {
+							*byte = rand;
+						}
+					} else {
+						rng.fill_bytes(&mut bytes);
+					};
+					write_private(&recipients, &output, bytes.as_slice(), encoding)?;
 				}
 			}
 		}
