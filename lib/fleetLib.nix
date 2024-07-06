@@ -65,14 +65,6 @@ with nixpkgs.lib; rec {
       '';
     };
 
-  mkGarage = {}: {mkSecretGenerator, ...}: mkSecretGenerator {
-    script = ''
-      mkdir $out
-      gh generate ed25519 -p $out/public -s $out/secret
-      gh decode -i $out/public | gh public -e hex -o $out/node_id
-    '';
-  };
-
   mkX25519 = {encoding ? null}: {mkSecretGenerator, ...}:
     mkSecretGenerator {
       script = ''
@@ -81,8 +73,6 @@ with nixpkgs.lib; rec {
           ${optionalString (encoding != null) "--encoding=${encoding}"}
       '';
     };
-
-  mkWireguard = {}: mkX25519 {encoding = "base64";};
 
   mkRsa = {size ? 4096}: {
     openssl,
@@ -100,4 +90,31 @@ with nixpkgs.lib; rec {
         cat rsa_public.key | gh public -o $out/public
       '';
     };
+
+  mkBytes = {
+    count ? 32,
+    encoding,
+    noNuls ? false,
+  }: {mkSecretGenerator, ...}:
+    mkSecretGenerator {
+      script = ''
+        mkdir $out
+        gh generate bytes --count=${toString count} --encoding=${encoding} -s $out/secret \
+          ${optionalString noNuls "--no-nuls"}
+      '';
+    };
+  mkHexBytes = {count ? 32}:
+    mkBytes {
+      inherit count;
+      encoding = "hex";
+    };
+  mkBase64Bytes = {count ? 32}:
+    mkBytes {
+      inherit count;
+      encoding = "base64";
+    };
+
+  # Wireguard
+  # mkWireguard = {}: mkX25519 {encoding = "base64";};
+  # mkWireguardPsk = {}: mkBase64Bytes {count = 32;};
 }
