@@ -99,7 +99,7 @@ with nixpkgs.lib; rec {
     mkSecretGenerator {
       script = ''
         mkdir $out
-        gh generate bytes --count=${toString count} --encoding=${encoding} -s $out/secret \
+        gh generate bytes --count=${toString count} --encoding=${encoding} -o $out/secret \
           ${optionalString noNuls "--no-nuls"}
       '';
     };
