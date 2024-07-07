@@ -130,7 +130,7 @@ in {
         # nixos-impermanence compatibility: secrets are encrypted by host-key,
         # but with impermanence we expect that the host-key is installed by
         # persist-file activation script.
-        ++ (lib.optional (config.system.activationScripts ? "persist-file") "persist-file")
+        ++ (lib.optional (config.system.activationScripts ? "persist-files") "persist-files")
       ) ''
         1>&2 echo "setting up secrets"
         ${pkgs.fleet-install-secrets}/bin/fleet-install-secrets install ${secretsFile}
