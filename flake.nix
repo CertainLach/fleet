@@ -16,19 +16,18 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
-  outputs = {
+  outputs = inputs @ {
     self,
-    rust-overlay,
     flake-parts,
-    nixpkgs,
-    nixpkgs-stable-for-tests,
     crane,
+    ...
   }:
     flake-parts.lib.mkFlake {
-      # Not passing inputs through inputs for better visibility.
-      inputs = {};
+      inherit inputs;
     } {
-      flake = {
+      flake = let
+        inherit (inputs.nixpkgs.lib) mapAttrs;
+      in {
         lib = import ./lib {
           fleetPkgsForPkgs = pkgs:
             import ./pkgs {
@@ -45,11 +44,11 @@
             '';
             inventory = output: {
               children =
-                builtins.mapAttrs (configName: cluster: {
+                mapAttrs (configName: cluster: {
                   what = "fleet cluster configuration";
 
                   children =
-                    builtins.mapAttrs (hostName: host: {
+                    mapAttrs (hostName: host: {
                       what = "host [${host.system}]";
                     })
                     cluster.config.hosts;
@@ -70,19 +69,20 @@
         pkgs,
         ...
       }: let
+        inherit (lib) mapAttrs' elem;
         # Can also be built for darwin, through it is not usual to deploy nixos systems from macos machines.
         # I have no hardware for such testing, thus only adding machines I actually have and use.
         #
         # It is not possible to deploy any host from armv6/armv7 hardware, and I don't think it even makes sense.
         deployerSystems = ["aarch64-linux" "x86_64-linux"];
-        deployerSystem = builtins.elem system deployerSystems;
+        deployerSystem = elem system deployerSystems;
         lib = pkgs.lib;
         rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
         craneLib = (crane.mkLib pkgs).overrideToolchain rust;
       in {
-        _module.args.pkgs = import nixpkgs {
+        _module.args.pkgs = import inputs.nixpkgs {
           inherit system;
-          overlays = [(rust-overlay.overlays.default)];
+          overlays = [(inputs.rust-overlay.overlays.default)];
         };
         # Reference fleet package should be built with nightly rust, specified in rust-toolchain.toml.
         packages = lib.mkIf deployerSystem (let
@@ -116,14 +116,14 @@
         checks = let
           packages = import ./pkgs {
             inherit (pkgs) callPackage;
-            craneLib = crane.mkLib (import nixpkgs {inherit system;});
+            craneLib = crane.mkLib pkgs;
           };
           packages-with-nixpkgs-stable = import ./pkgs {
             inherit (pkgs) callPackage;
-            craneLib = crane.mkLib (import nixpkgs-stable-for-tests {inherit system;});
+            craneLib = crane.mkLib (import inputs.nixpkgs-stable-for-tests {inherit system;});
           };
           prefixAttrs = prefix: attrs:
-            nixpkgs.lib.attrsets.mapAttrs' (name: value: {
+            mapAttrs' (name: value: {
               name = "${prefix}${name}";
               value = value.overrideAttrs (prev: {
                 pname = "${prefix}${prev.pname}";

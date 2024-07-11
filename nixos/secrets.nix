@@ -3,16 +3,17 @@
   config,
   pkgs,
   ...
-}:
-with lib; let
+}: let
   inherit (lib.strings) hasPrefix removePrefix;
+  inherit (lib) mkOption mkOptionDefault mapAttrs stringAfter;
+  inherit (lib.types) submodule str attrsOf nullOr unspecified lazyAttrsOf;
   plaintextPrefix = "<PLAINTEXT>";
   plaintextNewlinePrefix = "<PLAINTEXT-NL>";
 
   sysConfig = config;
   secretPartType = secretName:
-    types.submodule ({config, ...}: {
-      options = with types; {
+    submodule ({config, ...}: {
+      options = {
         raw = mkOption {
           description = "Secret in fleet-specific undocumented format, do not use. Import from fleet.nix";
           internal = true;
@@ -49,11 +50,11 @@ with lib; let
         stablePath = mkOptionDefault "/run/secrets/${secretName}/${partName}";
       };
     });
-  secretType = types.submodule ({config, ...}: let
+  secretType = submodule ({config, ...}: let
     secretName = config._module.args.name;
   in {
-    freeformType = types.lazyAttrsOf (secretPartType secretName);
-    options = with types; {
+    freeformType = lazyAttrsOf (secretPartType secretName);
+    options = {
       shared = mkOption {
         description = "Is this secret owned by this machine, or propagated from shared secrets";
         default = false;
@@ -112,7 +113,7 @@ with lib; let
 in {
   options = {
     secrets = mkOption {
-      type = types.attrsOf secretType;
+      type = attrsOf secretType;
       default = {};
       description = "Host-local secrets";
     };

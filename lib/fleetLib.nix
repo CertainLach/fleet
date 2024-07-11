@@ -2,8 +2,11 @@
 {
   nixpkgs,
   hostNames,
-}:
-with nixpkgs.lib; rec {
+}: let
+  inherit (nixpkgs) lib;
+  inherit (lib) listToAttrs remove unique crossLists sort elemAt mkOptionType mkOverride optionalString;
+  inherit (lib.types) listOf coercedTo oneOf submodule;
+in rec {
   hostsToAttrs = f:
     listToAttrs (
       map (name: {
@@ -33,6 +36,27 @@ with nixpkgs.lib; rec {
     if this < other
     then "${this}-${other}"
     else "${other}-${this}";
+
+  types = rec {
+    anyModule = mkOptionType {
+      name = "submodule";
+      inherit (submodule {}) check;
+      merge = lib.options.mergeOneOption;
+      description = "Nixos module";
+    };
+    listOfAnyModuleStrict =
+      listOf anyModule;
+    listOfAnyModule =
+      coercedTo (oneOf [listOfAnyModuleStrict anyModule]) (
+        v:
+          if builtins.isAttrs v
+          then [v]
+          else if builtins.isFunction v
+          then [v]
+          else v
+      )
+      listOfAnyModuleStrict;
+  };
 
   # mkDefault = mkOverride 1000
   # For places, where fleet knows better than nixpkgs defaults.

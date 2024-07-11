@@ -1,8 +1,10 @@
-{lib, ...}:
-with lib; {
+{lib, ...}: let
+  inherit (lib) mkOption;
+  inherit (lib.types) listOf unspecified str;
+in {
   options = {
     assertions = mkOption {
-      type = types.listOf types.unspecified;
+      type = listOf unspecified;
       internal = true;
       default = [];
       example = [
@@ -21,7 +23,7 @@ with lib; {
     warnings = mkOption {
       internal = true;
       default = [];
-      type = types.listOf types.str;
+      type = listOf str;
       example = ["The `foo' service is deprecated and will go away soon!"];
       description = ''
         This option allows modules to show warnings to users during

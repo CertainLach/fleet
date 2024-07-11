@@ -4,58 +4,53 @@
   config,
   nixpkgs,
   ...
-}:
-with lib;
-with fleetLib; let
-  hostModule = with types;
-    {...} @ hostConfig: let
-      hostName = hostConfig.config._module.args.name;
-    in {
-      options = {
-        nixosModules = mkOption {
-          type = listOf (mkOptionType {
-            name = "submodule";
-            inherit (submodule {}) check;
-            merge = lib.options.mergeOneOption;
-            description = "Nixos module";
-          });
-          description = "List of nixos modules";
-          default = [];
-        };
-        system = mkOption {
-          type = str;
-          description = "Type of system";
-        };
-        encryptionKey = mkOption {
-          type = str;
-          description = "Encryption key";
-        };
-        nixosSystem = mkOption {
-          type = unspecified;
-          description = "Nixos configuration";
-        };
-        nixpkgs = mkOption {
-          type = unspecified;
-          description = "Nixpkgs override";
-          default = nixpkgs;
-        };
+}: let
+  inherit (fleetLib) hostsToAttrs mkFleetGeneratorDefault;
+  inherit (fleetLib.types) listOfAnyModule;
+  inherit (lib) mkOption mkOptionType;
+  inherit (lib.types) str unspecified attrsOf listOf submodule;
+  hostModule = {...} @ hostConfig: let
+    hostName = hostConfig.config._module.args.name;
+  in {
+    options = {
+      nixosModules = mkOption {
+        # Not too strict, but nixos module system will fix everything.
+        type =
+          listOfAnyModule;
+
+        description = "List of nixos modules";
+        default = [];
       };
-      config = {
-        nixosSystem = hostConfig.config.nixpkgs.lib.nixosSystem {
-          inherit (hostConfig.config) system;
-          modules = hostConfig.config.nixosModules;
-          specialArgs = {
-            inherit fleetLib;
-            fleet = hostsToAttrs (host: config.hosts.${host}.nixosSystem.config);
-          };
-        };
-        nixosModules = [
-          ({...}: {
-            networking.hostName = mkFleetGeneratorDefault hostName;
-          })
-        ];
+      system = mkOption {
+        type = str;
+        description = "Type of system";
+      };
+      encryptionKey = mkOption {
+        type = str;
+        description = "Encryption key";
+      };
+      nixosSystem = mkOption {
+        type = unspecified;
+        description = "Nixos configuration";
+      };
+      nixpkgs = mkOption {
+        type = unspecified;
+        description = "Nixpkgs override";
+        default = nixpkgs;
       };
     };
+    config = {
+      nixosSystem = hostConfig.config.nixpkgs.lib.nixosSystem {
+        inherit (hostConfig.config) system;
+        modules = hostConfig.config.nixosModules;
+        specialArgs = {
+          inherit fleetLib;
+          fleet = hostsToAttrs (host: config.hosts.${host}.nixosSystem.config);
+        };
+      };
+      nixosModules.networking.hostName = mkFleetGeneratorDefault hostName;
+    };
+  };
   overlayType = mkOptionType {
     name = "nixpkgs-overlay";
     description = "nixpkgs overlay";
@@ -63,19 +58,14 @@ with fleetLib; let
     merge = lib.mergeOneOption;
   };
 in {
-  options = with types; {
+  options = {
     hosts = mkOption {
       type = attrsOf (submodule hostModule);
       default = {};
       description = "Configurations of individual hosts";
     };
     nixosModules = mkOption {
-      type = listOf (mkOptionType {
-        name = "submodule";
-        inherit (submodule {}) check;
-        merge = lib.options.mergeOneOption;
-        description = "Nixos modules";
-      });
+      type = listOfAnyModule;
       description = "Modules, which should be added to every system";
       default = [];
     };
@@ -89,9 +79,9 @@ in {
       nixosModules =
         config.nixosModules
         ++ [
-          ({...}: {
+          {
             nixpkgs.overlays = config.overlays;
-          })
+          }
         ];
     });
     nixosModules = import ../../nixos/modules/module-list.nix;

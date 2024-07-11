@@ -3,11 +3,13 @@
   fleetLib,
   config,
   ...
-}:
-with lib;
-with fleetLib; let
-  sharedSecret = with types; ({config, ...}: {
-    freeformType = types.lazyAttrsOf unspecified;
+}: let
+  inherit (fleetLib) hostsToAttrs;
+  inherit (lib) mkOption mapAttrsToList mapAttrs filterAttrs concatStringsSep;
+  inherit (lib.types) lazyAttrsOf unspecified nullOr listOf str bool attrsOf submodule;
+
+  sharedSecret = {config, ...}: {
+    freeformType = lazyAttrsOf unspecified;
     options = {
       expectedOwners = mkOption {
         type = nullOr (listOf str);
@@ -66,9 +68,9 @@ with fleetLib; let
         default = [];
       };
     };
-  });
-  hostSecret = with types; {
-    freeformType = types.lazyAttrsOf unspecified;
+  };
+  hostSecret = {
+    freeformType = lazyAttrsOf unspecified;
     options = {
       createdAt = mkOption {
         type = nullOr str;
@@ -81,7 +83,7 @@ with fleetLib; let
     };
   };
 in {
-  options = with types; {
+  options = {
     version = mkOption {
       type = str;
       default = "";
@@ -128,11 +130,7 @@ in {
     });
     # TODO: Should this attribute be moved to `nixpkgs.overlays`?
     overlays = [
-      (final: prev: let
-        lib = final.lib;
-        inherit (lib) strings;
-        inherit (strings) concatStringsSep;
-      in {
+      (final: prev: {
         mkSecretGenerators = {recipients}: rec {
           # TODO: Merge both generators to one with consistent options syntax?
           # Impure generator is built on local machine, then built closure is copied to remote machine,

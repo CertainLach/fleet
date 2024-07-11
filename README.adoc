@@ -63,18 +63,14 @@ An NixOS cluster deployment tool.
       # nixosModules section of fleet config declares modules, which are used for all configured nixos hosts.
       nixosModules = [
         lanzaboote.nixosModules.lanzaboote
-        ({
-          config,
-          lib,
-          ...
-        }: {
+        {
           # Make `nix shell nixpkgs#thing` use the same nixpkgs, as used to build the system.
           nix.registry.nixpkgs = {
             from = { id = "nixpkgs"; type = "indirect"; };
             flake = nixpkgs;
             exact = false;
           };
-        })
+        }
       ];
 
       # Those modules are used to configure all the machines in cluster at the same time, good example of global modules
@@ -97,12 +93,12 @@ An NixOS cluster deployment tool.
           ./controlplane-1/hardware-configuration.nix
           ./controlplane-1/configuration.nix
           # Configuration may also be specified inline, as in any nixos config.
-          ({...}: {
+          {
             services.ray = {
               gpus = 4;
               cpus = 128;
             };
-          })
+          }
         ];
       };
     };

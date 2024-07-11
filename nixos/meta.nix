@@ -2,11 +2,13 @@
   lib,
   pkgs,
   ...
-}:
-with lib; {
-  options = with types; {
+}: let
+  inherit (lib) mkOption;
+  inherit (lib.types) listOf str submodule;
+in {
+  options = {
     nixpkgs.resolvedPkgs = mkOption {
-      type = types.pkgs // {description = "nixpkgs.pkgs";};
+      type = lib.types.pkgs // {description = "nixpkgs.pkgs";};
       description = "Value of pkgs";
     };
     tags = mkOption {
@@ -30,9 +32,6 @@ with lib; {
         };
       };
       description = "Network definition of host";
-    };
-    buildTarget = mkOption {
-      type = enum ["toplevel" "sd-image" "installation-cd"];
     };
   };
   config = {
