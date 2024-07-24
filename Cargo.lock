@@ -784,7 +784,7 @@ dependencies = [
  "itertools",
  "nix-eval",
  "nixlike",
- "once_cell",
+ "nom",
  "openssh",
  "owo-colors",
  "peg",

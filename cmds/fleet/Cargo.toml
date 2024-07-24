@@ -19,7 +19,6 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 time = { version = "0.3", features = ["serde"] }
-once_cell = "1.19"
 hostname = "0.4.0"
 age-core = "0.10"
 peg = "0.8"
@@ -45,6 +44,7 @@ tracing-indicatif = { version = "0.3", optional = true }
 human-repr = { version = "1.1", optional = true }
 indicatif = { version = "0.17", optional = true }
 nix-eval.workspace = true
+nom = "7.1.3"
 
 [features]
 # Not quite stable

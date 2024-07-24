@@ -126,6 +126,7 @@ async fn deploy_task(
 	action: DeployAction,
 	host: &ConfigHost,
 	built: PathBuf,
+	specialisation: Option<String>,
 	disable_rollback: bool,
 ) -> Result<()> {
 	let mut failed = false;
@@ -190,9 +191,14 @@ async fn deploy_task(
 	if action.should_activate() && !failed {
 		let _span = info_span!("activating").entered();
 		info!("executing activation script");
-		let mut switch_script = built.clone();
-		switch_script.push("bin");
-		switch_script.push("switch-to-configuration");
+		let specialised = if let Some(specialisation) = specialisation {
+			let mut specialised = built.join("specialisation");
+			specialised.push(specialisation);
+			specialised
+		} else {
+			built.clone()
+		};
+		let switch_script = specialised.join("bin/switch-to-configuration");
 		let mut cmd = host.cmd(switch_script).in_current_span().await?;
 		cmd.arg(action.name().expect("upload.should_activate == false"));
 		if let Err(e) = cmd.sudo().run().in_current_span().await {
@@ -255,12 +261,11 @@ async fn build_task(config: Config, host: String, build_attr: &str) -> Result<Pa
 			.system
 			.build[{ build_attr }]
 	);
-	let outputs = drv.build().await.map_err(|e| {
+	let outputs = drv.build().await.inspect_err(|_| {
 			if build_attr == "sdImage" {
 				info!("sd-image build failed");
 				info!("Make sure you have imported modulesPath/installer/sd-card/sd-image-<arch>[-installer].nix (For installer, you may want to check config)");
 			}
-			e
 		})?;
 	let out_output = outputs
 		.get("out")
@@ -275,7 +280,7 @@ impl BuildSystems {
 		let set = LocalSet::new();
 		let build_attr = self.build_attr.clone();
 		for host in hosts.into_iter() {
-			if config.should_skip(&host.name) {
+			if config.should_skip(&host).await? {
 				continue;
 			}
 			let config = config.clone();
@@ -324,7 +329,7 @@ impl Deploy {
 		let hosts = config.list_hosts().await?;
 		let set = LocalSet::new();
 		for host in hosts.into_iter() {
-			if config.should_skip(&host.name) {
+			if config.should_skip(&host).await? {
 				continue;
 			}
 			let config = config.clone();
@@ -379,8 +384,19 @@ impl Deploy {
 							}
 						}
 					}
-					if let Err(e) =
-						deploy_task(self.action, &host, built, self.disable_rollback).await
+					if let Err(e) = deploy_task(
+						self.action,
+						&host,
+						built,
+						if let Ok(v) = config.action_attr(&host, "specialisation").await {
+							v
+						} else {
+							error!("unreachable? failed to get specialization");
+							return;
+						},
+						self.disable_rollback,
+					)
+					.await
 					{
 						error!("activation failed: {e}");
 					}

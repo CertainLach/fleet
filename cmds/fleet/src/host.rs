@@ -1,4 +1,6 @@
 use std::{
+	cell::OnceCell,
+	collections::BTreeMap,
 	env::current_dir,
 	ffi::{OsStr, OsString},
 	fmt::Display,
@@ -10,9 +12,16 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use clap::{ArgGroup, Parser};
+use clap::Parser;
 use fleet_shared::SecretData;
 use nix_eval::{nix_go, nix_go_json, NixSessionPool, Value};
+use nom::{
+	bytes::complete::take_while1,
+	character::complete::char,
+	combinator::{map, opt},
+	multi::separated_list1,
+	sequence::{preceded, separated_pair},
+};
 use openssh::SessionBuilder;
 use serde::de::DeserializeOwned;
 use tempfile::NamedTempFile;
@@ -53,10 +62,26 @@ pub struct ConfigHost {
 	pub name: String,
 	pub local: bool,
 	pub session: OnceLock<Arc<openssh::Session>>,
+	groups: OnceCell<Vec<String>>,
 
 	pub nixos_config: Option<Value>,
 }
 impl ConfigHost {
+	pub async fn tags(&self) -> Result<Vec<String>> {
+		if let Some(v) = self.groups.get() {
+			return Ok(v.clone());
+		}
+		// TOCTOU is possible here in case if config is changed, but this case is not handled anywhere anyway,
+		// assuming getting tags always returns the same value.
+		let Some(nixos_config) = &self.nixos_config else {
+			return Ok(vec![]);
+		};
+		let tags: Vec<String> = nix_go_json!(nixos_config.tags);
+
+		let _ = self.groups.set(tags.clone());
+
+		Ok(tags)
+	}
 	async fn open_session(&self) -> Result<Arc<openssh::Session>> {
 		assert!(!self.local, "do not open ssh connection to local session");
 		// FIXME: TOCTOU
@@ -217,14 +242,70 @@ impl ConfigHost {
 }
 
 impl Config {
-	pub fn should_skip(&self, host: &str) -> bool {
-		if !self.opts.skip.is_empty() {
-			self.opts.skip.iter().any(|h| h as &str == host)
-		} else if !self.opts.only.is_empty() {
-			!self.opts.only.iter().any(|h| h as &str == host)
-		} else {
-			false
+	pub async fn should_skip(&self, host: &ConfigHost) -> Result<bool> {
+		if !self.opts.skip.is_empty() && self.opts.skip.iter().any(|h| h as &str == host.name) {
+			return Ok(true);
 		}
+		if self.opts.only.is_empty() {
+			return Ok(false);
+		}
+		let mut have_group_matches = false;
+		for item in self.opts.only.iter() {
+			match item {
+				HostItem::Host { name, .. } if *name == host.name => {
+					return Ok(false);
+				}
+				HostItem::Tag { .. } => {
+					have_group_matches = true;
+				}
+				_ => {}
+			}
+		}
+		if have_group_matches {
+			let host_tags = host.tags().await?;
+			for item in self.opts.only.iter() {
+				match item {
+					HostItem::Tag { name, .. } if host_tags.contains(name) => {
+						return Ok(false);
+					}
+					_ => {}
+				}
+			}
+		}
+		Ok(true)
+	}
+	pub async fn action_attr(&self, host: &ConfigHost, attr: &str) -> Result<Option<String>> {
+		if self.opts.only.is_empty() {
+			return Ok(None);
+		}
+		let mut have_group_matches = false;
+		for item in self.opts.only.iter() {
+			match item {
+				HostItem::Host { name, attrs }
+					if *name == host.name && attrs.contains_key(attr) =>
+				{
+					return Ok(attrs.get(attr).cloned());
+				}
+				HostItem::Tag { attrs, .. } if attrs.contains_key(attr) => {
+					have_group_matches = true;
+				}
+				_ => {}
+			}
+		}
+		if have_group_matches {
+			let host_tags = host.tags().await?;
+			for item in self.opts.only.iter() {
+				match item {
+					HostItem::Tag { name, attrs }
+						if host_tags.contains(name) && attrs.contains_key(attr) =>
+					{
+						return Ok(attrs.get(attr).cloned());
+					}
+					_ => {}
+				}
+			}
+		}
+		Ok(None)
 	}
 	pub fn is_local(&self, host: &str) -> bool {
 		self.opts.localhost.as_ref().map(|s| s as &str) == Some(host)
@@ -237,6 +318,11 @@ impl Config {
 			local: true,
 			session: OnceLock::new(),
 			nixos_config: None,
+			groups: {
+				let cell = OnceCell::new();
+				let _ = cell.set(vec![]);
+				cell
+			},
 		}
 	}
 
@@ -249,6 +335,7 @@ impl Config {
 			local: self.is_local(name),
 			session: OnceLock::new(),
 			nixos_config: Some(nixos_config),
+			groups: OnceCell::new(),
 		})
 	}
 	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
@@ -356,15 +443,59 @@ impl Config {
 	}
 }
 
+#[derive(Clone)]
+enum HostItem {
+	Host {
+		name: String,
+		attrs: BTreeMap<String, String>,
+	},
+	Tag {
+		name: String,
+		attrs: BTreeMap<String, String>,
+	},
+}
+fn host_item_parser(input: &str) -> Result<HostItem, String> {
+	fn err_to_string(err: nom::Err<nom::error::Error<&str>>) -> String {
+		err.to_string()
+	}
+
+	let (input, is_tag) = map(opt(char('@')), |c| c.is_some())(input).map_err(err_to_string)?;
+	let (input, name) = map(
+		take_while1(|v| v != ',' && v != '?' && v != '@'),
+		str::to_owned,
+	)(input)
+	.map_err(err_to_string)?;
+
+	let kw_item = separated_pair(
+		map(take_while1(|v| v != '&' && v != '='), str::to_owned),
+		char('='),
+		map(take_while1(|v| v != '&'), str::to_owned),
+	);
+	let kw = map(separated_list1(char('&'), kw_item), |vec| {
+		vec.into_iter().collect::<BTreeMap<_, _>>()
+	});
+	let mut opt_kw = map(opt(preceded(char('?'), kw)), Option::unwrap_or_default);
+
+	let (input, attrs) = opt_kw(input).map_err(err_to_string)?;
+
+	if !input.is_empty() {
+		return Err(format!("unexpected trailing input: {input:?}"));
+	}
+	Ok(if is_tag {
+		HostItem::Tag { name, attrs }
+	} else {
+		HostItem::Host { name, attrs }
+	})
+}
+
 #[derive(Parser, Clone)]
-#[clap(group = ArgGroup::new("target_hosts"))]
 pub struct FleetOpts {
 	/// All hosts except those would be skipped
-	#[clap(long, number_of_values = 1, group = "target_hosts")]
-	only: Vec<String>,
+	#[clap(long, number_of_values = 1, value_parser = host_item_parser)]
+	only: Vec<HostItem>,
 
 	/// Hosts to skip
-	#[clap(long, number_of_values = 1, group = "target_hosts")]
+	#[clap(long, number_of_values = 1)]
 	skip: Vec<String>,
 
 	/// Host, which should be threaten as current machine

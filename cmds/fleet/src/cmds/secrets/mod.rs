@@ -436,7 +436,7 @@ impl Secret {
 		match self {
 			Secret::ForceKeys => {
 				for host in config.list_hosts().await? {
-					if config.should_skip(&host.name) {
+					if config.should_skip(&host).await? {
 						continue;
 					}
 					config.key(&host.name).await?;
@@ -639,7 +639,7 @@ impl Secret {
 					}
 				}
 				for host in config.list_hosts().await? {
-					if config.should_skip(&host.name) {
+					if config.should_skip(&host).await? {
 						continue;
 					}
 
