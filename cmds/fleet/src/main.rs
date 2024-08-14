@@ -58,7 +58,7 @@ impl Prefetch {
 				path.push("file://");
 				path.push(entry.path());
 
-				let mut status = MyCommand::new("nix");
+				let mut status = config.local_host().cmd("nix").await?;
 				status.args(&config.nix_args);
 				status.arg("store").arg("prefetch-file").arg(path);
 				status.run_nix_string().instrument(span).await?;

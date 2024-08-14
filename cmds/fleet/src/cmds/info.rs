@@ -38,9 +38,9 @@ impl Info {
 			InfoCmd::ListHosts { ref tagged } => {
 				'host: for host in config.list_hosts().await? {
 					if !tagged.is_empty() {
-						let config = &config.config_unchecked_field;
+						let config = &config.config_field;
 						let tags: Vec<String> =
-							nix_go_json!(config.hosts[{ host.name }].nixosSystem.config.tags);
+							nix_go_json!(config.hosts[{ host.name }].tags);
 						for tag in tagged {
 							if !tags.contains(tag) {
 								continue 'host;

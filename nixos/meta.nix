@@ -3,18 +3,16 @@
   pkgs,
   ...
 }: let
-  inherit (lib) mkOption;
+  inherit (lib.options) mkOption;
   inherit (lib.types) listOf str submodule;
+  inherit (lib.modules) mkRemovedOptionModule;
 in {
   options = {
-    nixpkgs.resolvedPkgs = mkOption {
+    # TODO: Give a real name.
+    # Previously it was nixpkgs.resolvedPkgs, which was erroreously merged with nixpkgs override attribute.
+    _resolvedPkgs = mkOption {
       type = lib.types.pkgs // {description = "nixpkgs.pkgs";};
       description = "Value of pkgs";
-    };
-    tags = mkOption {
-      type = listOf str;
-      description = "Host tags";
-      default = [];
     };
     network = mkOption {
       type = submodule {
@@ -34,9 +32,11 @@ in {
       description = "Network definition of host";
     };
   };
+  imports = [
+    (mkRemovedOptionModule ["tags"] "tags are now defined at the host level, not the nixos system level for fast filtering without evaluating unnecessary hosts.")
+  ];
   config = {
-    tags = ["all"];
     network = {};
-    nixpkgs.resolvedPkgs = pkgs;
+    _resolvedPkgs = pkgs;
   };
 }

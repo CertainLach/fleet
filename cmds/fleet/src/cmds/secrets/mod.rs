@@ -598,7 +598,7 @@ impl Secret {
 					return Ok(());
 				}
 
-				let config_field = &config.config_unchecked_field;
+				let config_field = &config.config_field;
 				let field = nix_go!(config_field.sharedSecrets[{ name }]);
 
 				let updated = update_owner_set(
@@ -623,7 +623,7 @@ impl Secret {
 						.collect::<HashSet<_>>();
 					let shared_set = config.list_shared().into_iter().collect::<HashSet<_>>();
 					for missing in expected_shared_set.difference(&shared_set) {
-						let config_field = &config.config_unchecked_field;
+						let config_field = &config.config_field;
 						let secret = nix_go!(config_field.sharedSecrets[{ missing }]);
 						let expected_owners: Option<Vec<String>> =
 							nix_go_json!(secret.expectedOwners);
@@ -675,7 +675,7 @@ impl Secret {
 				for name in &config.list_shared() {
 					info!("updating secret: {name}");
 					let data = config.shared_secret(name)?;
-					let config_field = &config.config_unchecked_field;
+					let config_field = &config.config_field;
 					let expected_owners: Vec<String> =
 						nix_go_json!(config_field.sharedSecrets[{ name }].expectedOwners);
 					if expected_owners.is_empty() {

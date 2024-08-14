@@ -254,13 +254,8 @@ async fn build_task(config: Config, host: String, build_attr: &str) -> Result<Pa
 	let host = config.host(&host).await?;
 	// let action = Action::from(self.subcommand.clone());
 	let fleet_config = &config.config_field;
-	let drv = nix_go!(
-		fleet_config.hosts[{ &host.name }]
-			.nixosSystem
-			.config
-			.system
-			.build[{ build_attr }]
-	);
+	let nixos = host.nixos_config().await?;
+	let drv = nix_go!(nixos.system.build[{ build_attr }]);
 	let outputs = drv.build().await.inspect_err(|_| {
 			if build_attr == "sdImage" {
 				info!("sd-image build failed");
@@ -335,6 +330,7 @@ impl Deploy {
 			let config = config.clone();
 			let span = info_span!("deploy", host = field::display(&host.name));
 			let hostname = host.name.clone();
+			let local_host = config.local_host();
 			// FIXME: Fix repl concurrency (see build-systems)
 			set.spawn_local(
 				(async move {
@@ -354,7 +350,10 @@ impl Deploy {
 							// at least for the first deployment, to provide trusted store key.
 							//
 							// It is much slower, yet doesn't require root on the deployer machine.
-							let mut sign = MyCommand::new("nix");
+							let Ok(mut sign) = local_host.cmd("nix").await else {
+								error!("failed to setup local");
+								return;
+							};
 							// Private key for host machine is registered in nix-sign.nix
 							sign.arg("store")
 								.arg("sign")
@@ -362,7 +361,7 @@ impl Deploy {
 								.arg("-r")
 								.arg(&built);
 							if let Err(e) = sign.sudo().run_nix().await {
-								warn!("Failed to sign store paths: {e}");
+								warn!("failed to sign store paths: {e}");
 							};
 						}
 						let mut tries = 0;

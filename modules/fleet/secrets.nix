@@ -4,9 +4,12 @@
   config,
   ...
 }: let
-  inherit (fleetLib) hostsToAttrs;
-  inherit (lib) mkOption mapAttrsToList mapAttrs filterAttrs concatStringsSep;
+  inherit (fleetLib.options) mkHostsOption;
+  inherit (lib.options) mkOption;
   inherit (lib.types) lazyAttrsOf unspecified nullOr listOf str bool attrsOf submodule;
+  inherit (lib.lists) sort elem;
+  inherit (lib.attrsets) mapAttrsToList mapAttrs filterAttrs;
+  inherit (lib.strings) toJSON concatStringsSep;
 
   sharedSecret = {config, ...}: {
     freeformType = lazyAttrsOf unspecified;
@@ -82,11 +85,11 @@
       };
     };
   };
+  inherit (config) hostSecrets sharedSecrets;
 in {
   options = {
     version = mkOption {
       type = str;
-      default = "";
       internal = true;
     };
     sharedSecrets = mkOption {
@@ -100,36 +103,34 @@ in {
       description = "Host secrets. Imported from fleet.nix";
       internal = true;
     };
+    hosts = mkHostsOption ({config, ...}: {
+      nixos = {
+        secrets = let
+          host = config._module.args.name;
+          processSecret = v:
+            (removeAttrs v ["createdAt" "expiresAt" "expectedOwners" "owners" "regenerateOnOwnerAdded" "regenerateOnOwnerRemoved"])
+            // {
+              shared = true;
+            };
+        in
+          (
+            mapAttrs (_: processSecret)
+            (filterAttrs (_: v: elem host v.owners) sharedSecrets)
+          )
+          // (mapAttrs (_: processSecret) (hostSecrets.${host} or {}));
+        _file = ./secrets.nix;
+      };
+    });
   };
   config = {
     assertions =
       mapAttrsToList
       (name: secret: {
-        assertion = secret.expectedOwners == null || builtins.sort (a: b: a < b) secret.owners == builtins.sort (a: b: a < b) secret.expectedOwners;
-        message = "Shared secret ${name} is expected to be encrypted for ${builtins.toJSON secret.expectedOwners}, but it is encrypted for ${builtins.toJSON secret.owners}. Run fleet secrets regenerate to fix";
+        assertion = secret.expectedOwners == null || sort (a: b: a < b) secret.owners == sort (a: b: a < b) secret.expectedOwners;
+        message = "Shared secret ${name} is expected to be encrypted for ${toJSON secret.expectedOwners}, but it is encrypted for ${toJSON secret.owners}. Run fleet secrets regenerate to fix";
       })
       config.sharedSecrets;
-    hosts = hostsToAttrs (host: {
-      nixosModules = let
-        # processPart
-        processSecret = v:
-          (removeAttrs v ["createdAt" "expiresAt" "expectedOwners" "owners" "regenerateOnOwnerAdded" "regenerateOnOwnerRemoved"])
-          // {
-            shared = true;
-          };
-      in [
-        {
-          secrets =
-            (
-              mapAttrs (_: processSecret)
-              (filterAttrs (_: v: builtins.elem host v.owners) config.sharedSecrets)
-            )
-            // (mapAttrs (_: processSecret) (config.hostSecrets.${host} or {}));
-        }
-      ];
-    });
-    # TODO: Should this attribute be moved to `nixpkgs.overlays`?
-    overlays = [
+    nixpkgs.overlays = [
       (final: prev: {
         mkSecretGenerators = {recipients}: rec {
           # TODO: Merge both generators to one with consistent options syntax?

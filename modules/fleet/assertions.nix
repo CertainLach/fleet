@@ -1,6 +1,11 @@
-{lib, ...}: let
-  inherit (lib) mkOption;
+{
+  lib,
+  config,
+  ...
+}: let
+  inherit (lib.options) mkOption;
   inherit (lib.types) listOf unspecified str;
+  inherit (lib.lists) map filter;
 in {
   options = {
     assertions = mkOption {
@@ -30,6 +35,15 @@ in {
         the evaluation of the system configuration.
       '';
     };
+    errors = mkOption {
+      type = listOf str;
+      internal = true;
+      description = ''
+        Similar to warnings, however build will fail if any error exists.
+      '';
+    };
   };
-  # impl of assertions is in <fleet/lib/default.nix>
+  config.errors =
+    map (v: v.message)
+    (filter (v: !v.assertion) config.assertions);
 }

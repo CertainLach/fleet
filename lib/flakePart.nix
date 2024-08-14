@@ -1,0 +1,70 @@
+{crane}: {
+  fleetLib,
+  lib,
+  config,
+  ...
+}: let
+  inherit (lib.options) mkOption;
+  inherit (lib.attrsets) mapAttrs;
+  inherit (lib.types) lazyAttrsOf deferredModule unspecified;
+  inherit (fleetLib.options) mkHostsOption;
+in {
+  options.fleetModules = mkOption {
+    type = lazyAttrsOf unspecified;
+    default = {};
+  };
+  options.fleetConfigurations = mkOption {
+    type = lazyAttrsOf deferredModule;
+    apply = nameToModule:
+      mapAttrs (
+        name: module: data: let
+          # To use user-provided nixpkgs, we first need to extract wanted nixpkgs attribute,
+          # to do that, evaluate all the modules with only needed option declared.
+          bootstrapEval = lib.evalModules {
+            modules = [
+              module
+              {
+                options.nixpkgs.buildUsing = mkOption {
+                  description = ''
+                    Nixpkgs to use for fleetConfiguration evaluation.
+                  '';
+                };
+                config._module.check = false;
+              }
+            ];
+          };
+          bootstrapNixpkgs = bootstrapEval.config.nixpkgs.buildUsing;
+          normalEval = bootstrapNixpkgs.lib.evalModules {
+            modules =
+              (import ../modules/fleet/_modules.nix)
+              ++ [
+                data
+                module
+                {
+                  options.hosts = mkHostsOption {
+                    nixos.nixpkgs.overlays = [
+                      (final: prev: {
+                        # FIXME: make this name not conflicting
+                        craneLib = crane.mkLib prev;
+                      })
+                    ];
+                  };
+                }
+              ];
+            specialArgs.fleetLib = import ../lib {
+              inherit (bootstrapNixpkgs) lib;
+            };
+          };
+        in
+          normalEval
+      )
+      nameToModule;
+  };
+  config = {
+    _module.args.fleetLib = import ../lib {inherit lib;};
+    flake.fleetConfigurations = config.fleetConfigurations;
+    flake.fleetModules = config.fleetModules;
+  };
+
+  _file = ./flakePart.nix;
+}

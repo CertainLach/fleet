@@ -5,6 +5,7 @@ version.workspace = true
 build = "build.rs"
 
 [dependencies]
+anyhow.workspace = true
 better-command.workspace = true
 futures = "0.3.30"
 itertools = "0.13.0"

@@ -44,14 +44,14 @@ impl fmt::Display for Index {
 				let v = nixlike::format_identifier(k.as_str());
 				write!(f, ".{v}")
 			}
-			Index::Apply(o) => {
-				write!(f, "<apply>({o})")
+			Index::Apply(_) => {
+				write!(f, "<apply>(...)")
 			}
 			Index::Expr(e) => {
 				write!(f, "[{}]", e.out)
 			}
-			Index::ExprApply(e) => {
-				write!(f, "<apply>({})", e.out)
+			Index::ExprApply(_) => {
+				write!(f, "<apply>(...)")
 			}
 			Index::Pipe(e) => {
 				write!(f, "<map>({})", e.out)

@@ -9,6 +9,8 @@ use tokio::{io::AsyncRead, process::Command, select};
 use tokio_util::codec::{BytesCodec, FramedRead, LinesCodec};
 use tracing::debug;
 
+use crate::host::EscalationStrategy;
+
 fn escape_bash(input: &str, out: &mut String) {
 	const TO_ESCAPE: &str = "$ !\"#&'()*,;<>?[\\]^`{|}";
 	if input.chars().all(|c| !TO_ESCAPE.contains(c)) {
@@ -27,32 +29,51 @@ fn escape_bash(input: &str, out: &mut String) {
 fn ostoutf8(os: impl AsRef<OsStr>) -> String {
 	os.as_ref().to_str().expect("non-utf8 data").to_owned()
 }
-#[derive(Clone)]
+
+#[derive(Clone, Debug)]
 pub struct MyCommand {
 	command: String,
 	args: Vec<String>,
 	env: Vec<(String, String)>,
 	ssh_session: Option<Arc<Session>>,
+	escalation: EscalationStrategy,
+	escalate: bool,
 }
 impl MyCommand {
-	pub fn new_on(cmd: impl AsRef<OsStr>, session: Arc<Session>) -> Self {
+	pub fn new_on(
+		escalation: EscalationStrategy,
+		cmd: impl AsRef<OsStr>,
+		session: Arc<Session>,
+	) -> Self {
 		assert!(!cmd.as_ref().is_empty());
 		Self {
 			command: ostoutf8(cmd),
 			args: vec![],
 			env: vec![],
 			ssh_session: Some(session),
+			escalation,
+			escalate: false,
 		}
 	}
-	pub fn new(cmd: impl AsRef<OsStr>) -> Self {
+	pub fn new(escalation: EscalationStrategy, cmd: impl AsRef<OsStr>) -> Self {
 		assert!(!cmd.as_ref().is_empty());
 		Self {
 			command: ostoutf8(cmd),
 			args: vec![],
 			env: vec![],
 			ssh_session: None,
+			escalation,
+			escalate: false,
 		}
 	}
+	fn new_here(&self, cmd: impl AsRef<OsStr>) -> Self {
+		if let Some(ssh_session) = self.ssh_session.clone() {
+			Self::new_on(self.escalation, cmd, ssh_session)
+		} else {
+			Self::new(self.escalation, cmd)
+		}
+	}
+
 	fn into_args(self) -> Vec<String> {
 		let mut out = Vec::new();
 		if !self.env.is_empty() {
@@ -76,8 +97,7 @@ impl MyCommand {
 		if self.env.is_empty() {
 			return self;
 		}
-		let mut out = Self::new("env");
-		out.ssh_session = self.ssh_session;
+		let mut out = self.new_here("env");
 		for (k, v) in self.env {
 			assert!(!k.contains('='));
 			out.arg(format!("{k}={v}"));
@@ -160,26 +180,46 @@ impl MyCommand {
 		self
 	}
 	pub fn sudo(mut self) -> Self {
-		// TODO: Multiple escalation strategies.
-		// Maybe escalation should be moved to ConfigHost, to also support cases
-		// when there is no sudo on remote machine, but instead we can reconnect
-		// as root using ssh?
-		if std::env::var_os("NO_SUDO").is_some() {
-			let mut out = Self::new("su");
-			out.ssh_session = self.ssh_session.take();
-			out.arg("-c").arg(self.into_string());
-			out
-		} else {
-			let mut out = Self::new("sudo");
-			out.ssh_session = self.ssh_session.take();
-			out.args(self.into_args());
-			out
+		self.escalate = true;
+		self
+	}
+	fn wrap_sudo_if_needed(self) -> Self {
+		if !self.escalate {
+			return self;
+		}
+		match self.escalation {
+			EscalationStrategy::Su => {
+				let mut out = self.new_here("su");
+				out.arg("-c").arg(self.into_string());
+				out
+			}
+			EscalationStrategy::Sudo => {
+				let mut out = self.new_here("sudo");
+				out.args(self.into_args());
+				out
+			}
+			EscalationStrategy::Run0 => {
+				// run0 wants interactive authentication by default.
+				let mut run0 = self.new_here("run0");
+				let mut out = self.new_here("script");
+
+				// Red backgrounds messes with fleet formatting
+				run0.arg("--background=");
+				run0.args(self.into_args());
+
+				out.arg("-q");
+				out.arg("/dev/null");
+				out.arg("-c");
+				out.arg(run0.into_string());
+				dbg!(&out);
+				out
+			}
 		}
 	}
 
 	pub async fn run(self) -> Result<()> {
 		let str = self.clone().into_string();
-		let cmd = self.into_command_new()?;
+		let cmd = self.wrap_sudo_if_needed().into_command_new()?;
 		match cmd {
 			Either::Left(cmd) => run_nix_inner(str, cmd, &mut PlainHandler).await?,
 			Either::Right(cmd) => run_nix_inner_ssh(str, cmd, &mut PlainHandler).await?,
@@ -192,7 +232,7 @@ impl MyCommand {
 	}
 	pub async fn run_bytes(self) -> Result<Vec<u8>> {
 		let str = self.clone().into_string();
-		let cmd = self.into_command_new()?;
+		let cmd = self.wrap_sudo_if_needed().into_command_new()?;
 		let v = match cmd {
 			Either::Left(cmd) => run_nix_inner_stdout(str, cmd, &mut PlainHandler).await?,
 			Either::Right(cmd) => run_nix_inner_stdout_ssh(str, cmd, &mut PlainHandler).await?,
@@ -200,17 +240,17 @@ impl MyCommand {
 		Ok(v)
 	}
 
-	pub async fn run_nix_string(self) -> Result<String> {
+	pub async fn run_nix_string(mut self) -> Result<String> {
 		let str = self.clone().into_string();
-		let mut cmd = self.into_command();
-		cmd.arg("--log-format").arg("internal-json");
+		self.arg("--log-format").arg("internal-json");
+		let mut cmd = self.wrap_sudo_if_needed().into_command();
 		let bytes = run_nix_inner_stdout(str, cmd, &mut NixHandler::default()).await?;
 		Ok(String::from_utf8(bytes)?)
 	}
-	pub async fn run_nix(self) -> Result<()> {
+	pub async fn run_nix(mut self) -> Result<()> {
 		let str = self.clone().into_string();
-		let mut cmd = self.into_command();
-		cmd.arg("--log-format").arg("internal-json");
+		self.arg("--log-format").arg("internal-json");
+		let mut cmd = self.wrap_sudo_if_needed().into_command();
 		cmd.stdout(Stdio::inherit());
 		run_nix_inner(str, cmd, &mut NixHandler::default()).await
 	}

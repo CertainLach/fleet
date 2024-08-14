@@ -25,18 +25,23 @@
     flake-parts.lib.mkFlake {
       inherit inputs;
     } {
-      flake = let
-        inherit (inputs.nixpkgs.lib) mapAttrs;
-      in {
-        lib = import ./lib {
-          fleetPkgsForPkgs = pkgs:
-            import ./pkgs {
-              inherit (pkgs) callPackage;
-              craneLib = crane.mkLib pkgs;
-            };
-        };
+      flake = rec {
+        lib =
+          (import ./lib {
+            inherit (inputs.nixpkgs) lib;
+          })
+          // {
+            fleetConfiguration = throw "function-based interface is deprecated, use flake-parts syntax instead";
+          };
+        flakeModules.default = (import ./lib/flakePart.nix {
+          inherit crane;
+        });
+        flakeModule = flakeModules.default;
+
         # To be used with https://github.com/NixOS/nix/pull/8892
-        schemas = {
+        schemas = let
+          inherit (inputs.nixpkgs.lib) mapAttrs;
+        in {
           fleetConfigurations = {
             version = 1;
             doc = ''
@@ -69,7 +74,8 @@
         pkgs,
         ...
       }: let
-        inherit (lib) mapAttrs' elem;
+        inherit (lib.attrSets) mapAttrs';
+        inherit (lib.lists) elem;
         # Can also be built for darwin, through it is not usual to deploy nixos systems from macos machines.
         # I have no hardware for such testing, thus only adding machines I actually have and use.
         #
@@ -108,6 +114,7 @@
               pkg-config
               openssl
               bacon
+              nil
             ];
           };
         };

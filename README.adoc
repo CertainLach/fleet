@@ -24,44 +24,33 @@ An NixOS cluster deployment tool.
       url = "github:CertainLach/fleet";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    flake-parts.url = "github:hercules-ci/flake-parts";
     lanzaboote = {
       url = "github:nix-community/lanzaboote/v0.3.0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
-  outputs = {
-    nixpkgs,
-    fleet,
-    lanzaboote,
-    ...
-  }: {
-    # TODO: This section of documentation needs to use flake-utils.
-    formatter.x86_64-linux = let
-      pkgs = import nixpkgs {system = "x86_64-linux";};
-    in
-      pkgs.alejandra;
+  outputs = inputs: flake-parts.lib.mkFlake { inherit inputs; } {
+    imports = [inputs.fleet.flakeModules.default];
 
-    devShell.x86_64-linux = let
-      pkgs = import nixpkgs {
-        system = "x86_64-linux";
-      };
-    in
-      pkgs.mkShell {
-        buildInputs = with pkgs; [
-          fleet.packages.x86_64-linux.fleet
+    perSystem = {pkgs, system, ...}: {
+      _module.args.pkgs = import nixpkgs { inherit system; };
+
+      formatter = pkgs.alejandra;
+      devShells.default = pkgs.mkShell {
+        packages = [
+          inputs.fleet.packages.${system}.fleet
         ];
       };
+    };
 
     # Single flake may contain multiple fleet configurations, default one is called... `default`
-    fleetConfigurations.default = fleet.lib.fleetConfiguration {
+    fleetConfigurations.default = {
       # nixpkgs used to build the systems
-      inherit nixpkgs;
-      # fleet wants to pass some data, like secrets, to do that - fleet writes all the encrypted secrets to fleet.nix
-      # treat the contents of this file as implementation detail
-      data = import ./fleet.nix;
+      nixpkgs.buildUsing = nixpkgs;
       
-      # nixosModules section of fleet config declares modules, which are used for all configured nixos hosts.
-      nixosModules = [
+      # nixos option section of fleet config declares module, which is used for all configured nixos hosts.
+      nixos.imports = [
         lanzaboote.nixosModules.lanzaboote
         {
           # Make `nix shell nixpkgs#thing` use the same nixpkgs, as used to build the system.
@@ -77,7 +66,7 @@ An NixOS cluster deployment tool.
       # Is I.e wiring up the mesh VPN, or deploying kubernetes, or other things.
       #
       # Modules use the same semantics as standard nixos module system, they are just configuring all the hosts at once.
-      fleetModules = [
+      imports = [
         ./wireguard
         # Multi-instancible modules example
         (import ./kubernetes {hosts = ["a" "b"];})
@@ -89,7 +78,7 @@ An NixOS cluster deployment tool.
         # Every host has some system, for which the system configuration needs to be built
         system = "x86_64-linux";
         # And nixos modules
-        nixosModules = [
+        nixos.imports = [
           ./controlplane-1/hardware-configuration.nix
           ./controlplane-1/configuration.nix
           # Configuration may also be specified inline, as in any nixos config.

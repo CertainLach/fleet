@@ -5,7 +5,11 @@
   ...
 }: let
   inherit (lib.strings) hasPrefix removePrefix;
-  inherit (lib) mkOption mkOptionDefault mapAttrs stringAfter;
+  inherit (lib.stringsWithDeps) stringAfter;
+  inherit (lib.options) mkOption;
+  inherit (lib.lists) optional;
+  inherit (lib.attrsets) mapAttrs;
+  inherit (lib.modules) mkOptionDefault mkIf;
   inherit (lib.types) submodule str attrsOf nullOr unspecified lazyAttrsOf;
   plaintextPrefix = "<PLAINTEXT>";
   plaintextNewlinePrefix = "<PLAINTEXT-NL>";
@@ -110,6 +114,7 @@
       builtins.toJSON (mapAttrs (_: processSecret)
         config.secrets);
   };
+  useSysusers = (config.systemd ? sysusers && config.systemd.sysusers.enable) || (config ? userborn && config.userborn.enable);
 in {
   options = {
     secrets = mkOption {
@@ -120,21 +125,44 @@ in {
   };
   config = {
     environment.systemPackages = [pkgs.fleet-install-secrets];
+
+    systemd.services.fleet-install-secrets = mkIf useSysusers {
+      wantedBy = ["sysinit.target"];
+      after = ["systemd-sysusers.service"];
+      restartTriggers = [
+        secretsFile
+      ];
+      aliases = [
+        "sops-install-secrets"
+        "agenix-install-secrets"
+      ];
+
+      unitConfig.DefaultDependencies = false;
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.fleet-install-secrets}/bin/fleet-install-secrets install ${secretsFile}";
+      };
+    };
     system.activationScripts.decryptSecrets =
-      stringAfter (
-        [
-          # secrets are owned by user/group, thus we need to refer to those
-          "users"
-          "groups"
-          "specialfs"
-        ]
-        # nixos-impermanence compatibility: secrets are encrypted by host-key,
-        # but with impermanence we expect that the host-key is installed by
-        # persist-file activation script.
-        ++ (lib.optional (config.system.activationScripts ? "persist-files") "persist-files")
-      ) ''
-        1>&2 echo "setting up secrets"
-        ${pkgs.fleet-install-secrets}/bin/fleet-install-secrets install ${secretsFile}
-      '';
+      mkIf (!useSysusers)
+      (
+        stringAfter (
+          [
+            # secrets are owned by user/group, thus we need to refer to those
+            "users"
+            "groups"
+            "specialfs"
+          ]
+          # nixos-impermanence compatibility: secrets are encrypted by host-key,
+          # but with impermanence we expect that the host-key is installed by
+          # persist-file activation script.
+          ++ (optional (config.system.activationScripts ? "persist-files") "persist-files")
+        ) ''
+          1>&2 echo "setting up secrets"
+          ${pkgs.fleet-install-secrets}/bin/fleet-install-secrets install ${secretsFile}
+        ''
+      );
   };
 }
