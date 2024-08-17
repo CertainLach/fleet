@@ -52,7 +52,4 @@ in {
       };
     };
   };
-  config.nixpkgs.overlays = [
-    (final: prev: import ../../pkgs {inherit (final) callPackage craneLib;})
-  ];
 }

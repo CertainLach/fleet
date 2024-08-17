@@ -4,7 +4,7 @@
   inherit (lib.options) mkOption mergeOneOption;
   inherit (lib.modules) mkOverride;
   inherit (lib.types) listOf submodule attrsOf mkOptionType;
-  inherit (lib.strings) optionalString;
+  inherit (lib.strings) optionalString hasPrefix removePrefix;
 in rec {
   types = {
     overlay = mkOptionType {
@@ -16,12 +16,17 @@ in rec {
     listOfOverlay = listOf types.overlay;
 
     mkHostsType = module: attrsOf (submodule module);
+    mkDataType = module: submodule module;
   };
 
   options = {
     mkHostsOption = module:
       mkOption {
         type = types.mkHostsType module;
+      };
+    mkDataOption = module:
+      mkOption {
+        type = types.mkDataType module;
       };
   };
 
@@ -118,4 +123,18 @@ in rec {
   };
 
   inherit (secrets) mkPassword mkEd25519 mkX25519 mkRsa mkBytes mkHexBytes mkBase64Bytes;
+
+  strings = let
+    plaintextPrefix = "<PLAINTEXT>";
+    plaintextNewlinePrefix = "<PLAINTEXT-NL>";
+  in {
+    decodeRawSecret = raw:
+      if hasPrefix plaintextPrefix raw
+      then removePrefix plaintextPrefix raw
+      else if hasPrefix plaintextNewlinePrefix raw
+      then removePrefix plaintextNewlinePrefix raw
+      else throw "decodeRawSecret only works with plaintext-encoded secret public parts, got ${raw}";
+  };
+
+  inherit (strings) decodeRawSecret;
 }

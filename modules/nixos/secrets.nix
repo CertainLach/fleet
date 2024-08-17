@@ -1,26 +1,29 @@
 {
   lib,
+  fleetLib,
   config,
   pkgs,
   ...
 }: let
-  inherit (lib.strings) hasPrefix removePrefix;
+  inherit (builtins) hashString;
   inherit (lib.stringsWithDeps) stringAfter;
   inherit (lib.options) mkOption;
   inherit (lib.lists) optional;
   inherit (lib.attrsets) mapAttrs;
-  inherit (lib.modules) mkOptionDefault mkIf;
+  inherit (lib.modules) mkIf;
   inherit (lib.types) submodule str attrsOf nullOr unspecified lazyAttrsOf;
-  plaintextPrefix = "<PLAINTEXT>";
-  plaintextNewlinePrefix = "<PLAINTEXT-NL>";
+  inherit (fleetLib.strings) decodeRawSecret;
 
   sysConfig = config;
   secretPartType = secretName:
-    submodule ({config, ...}: {
+    submodule ({config, ...}: let
+      partName = config._module.args.name;
+    in {
       options = {
         raw = mkOption {
-          description = "Secret in fleet-specific undocumented format, do not use. Import from fleet.nix";
+          type = str;
           internal = true;
+          description = "Encoded & Encrypted secret part data, passed from fleet.nix";
         };
         hash = mkOption {
           type = str;
@@ -39,19 +42,11 @@
           description = "Secret public data (only available for plaintext)";
         };
       };
-      config = let
-        partName = config._module.args.name;
-      in {
-        hash = mkOptionDefault (builtins.hashString "sha1" config.raw);
-        data = mkOptionDefault (
-          if hasPrefix plaintextPrefix config.raw
-          then removePrefix plaintextPrefix config.raw
-          else if hasPrefix plaintextNewlinePrefix config.raw
-          then removePrefix plaintextNewlinePrefix config.raw
-          else throw "secret.part.data attribute only works for public plaintext secret parts, got ${config.raw}"
-        );
-        path = mkOptionDefault "/run/secrets/${secretName}/${config.hash}-${partName}";
-        stablePath = mkOptionDefault "/run/secrets/${secretName}/${partName}";
+      config = {
+        hash = hashString "sha1" config.raw;
+        data = decodeRawSecret config.raw;
+        path = "/run/secrets/${secretName}/${config.hash}-${partName}";
+        stablePath = "/run/secrets/${secretName}/${partName}";
       };
     });
   secretType = submodule ({config, ...}: let
@@ -62,11 +57,6 @@
       shared = mkOption {
         description = "Is this secret owned by this machine, or propagated from shared secrets";
         default = false;
-      };
-      expectedOwners = mkOption {
-        type = nullOr unspecified;
-        default = null;
-        internal = true;
       };
 
       generator = mkOption {
@@ -104,9 +94,6 @@
       "mode"
       "group"
       "owner"
-
-      # FIXME: Some of those removed attributes shouldn't be here, but there is some error in passing shared secrets from fleet to nixos.
-      "expectedOwners"
     ]));
   secretsFile = pkgs.writeTextFile {
     name = "secrets.json";

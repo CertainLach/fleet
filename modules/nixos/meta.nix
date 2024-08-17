@@ -4,7 +4,6 @@
   ...
 }: let
   inherit (lib.options) mkOption;
-  inherit (lib.types) listOf str submodule;
   inherit (lib.modules) mkRemovedOptionModule;
 in {
   options = {
@@ -14,29 +13,12 @@ in {
       type = lib.types.pkgs // {description = "nixpkgs.pkgs";};
       description = "Value of pkgs";
     };
-    network = mkOption {
-      type = submodule {
-        options = {
-          internalIps = mkOption {
-            type = listOf str;
-            description = "Internal ips";
-            default = [];
-          };
-          externalIps = mkOption {
-            type = listOf str;
-            description = "External ips";
-            default = [];
-          };
-        };
-      };
-      description = "Network definition of host";
-    };
   };
   imports = [
     (mkRemovedOptionModule ["tags"] "tags are now defined at the host level, not the nixos system level for fast filtering without evaluating unnecessary hosts.")
+    (mkRemovedOptionModule ["network"] "network is now defined at the host level, not the nixos system level")
   ];
   config = {
-    network = {};
     _resolvedPkgs = pkgs;
   };
 }

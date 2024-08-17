@@ -1,10 +1,12 @@
 # Required for nix copy in build_systems.rs
-{lib, config, ...}:
-let
+{
+  lib,
+  config,
+  ...
+}: let
   inherit (lib.modules) mkIf;
   hasPersistentHostname = config.networking.hostName != "";
-in
-{
+in {
   # https://github.com/NixOS/nix/issues/3023
   systemd.services.generate-nix-cache-key = mkIf hasPersistentHostname {
     wantedBy = ["multi-user.target"];

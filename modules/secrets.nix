@@ -1,18 +1,10 @@
-{
-  lib,
-  fleetLib,
-  config,
-  ...
-}: let
-  inherit (fleetLib.options) mkHostsOption;
+{lib, config, ...}: let
   inherit (lib.options) mkOption;
-  inherit (lib.types) lazyAttrsOf unspecified nullOr listOf str bool attrsOf submodule;
-  inherit (lib.lists) sort elem;
-  inherit (lib.attrsets) mapAttrsToList mapAttrs filterAttrs;
-  inherit (lib.strings) toJSON concatStringsSep;
+  inherit (lib.types) unspecified nullOr listOf str bool attrsOf submodule;
+  inherit (lib.strings) concatStringsSep;
+  inherit (lib.attrsets) mapAttrs;
 
   sharedSecret = {config, ...}: {
-    freeformType = lazyAttrsOf unspecified;
     options = {
       expectedOwners = mkOption {
         type = nullOr (listOf str);
@@ -48,88 +40,20 @@
         description = "Derivation to evaluate for secret generation";
         default = null;
       };
-      createdAt = mkOption {
-        type = nullOr str;
-        description = "When this secret was (re)generated";
-        default = null;
-      };
-      expiresAt = mkOption {
-        type = nullOr str;
-        description = "On which date this secret will expire, someone should regenerate this secret before it expires.";
-        default = null;
-      };
-
-      owners = mkOption {
-        type = listOf str;
-        description = ''
-          For which owners this secret is currently encrypted,
-          if not matches expectedOwners - then this secret is considered outdated, and
-          should be regenerated/reencrypted.
-
-          Imported from fleet.nix
-        '';
-        default = [];
-      };
     };
   };
-  hostSecret = {
-    freeformType = lazyAttrsOf unspecified;
-    options = {
-      createdAt = mkOption {
-        type = nullOr str;
-        default = null;
-      };
-      expiresAt = mkOption {
-        type = nullOr str;
-        default = null;
-      };
-    };
-  };
-  inherit (config) hostSecrets sharedSecrets;
 in {
   options = {
-    version = mkOption {
-      type = str;
-      internal = true;
-    };
     sharedSecrets = mkOption {
       type = attrsOf (submodule sharedSecret);
       default = {};
       description = "Shared secrets";
     };
-    hostSecrets = mkOption {
-      type = attrsOf (attrsOf (submodule hostSecret));
-      default = {};
-      description = "Host secrets. Imported from fleet.nix";
-      internal = true;
-    };
-    hosts = mkHostsOption ({config, ...}: {
-      nixos = {
-        secrets = let
-          host = config._module.args.name;
-          processSecret = v:
-            (removeAttrs v ["createdAt" "expiresAt" "expectedOwners" "owners" "regenerateOnOwnerAdded" "regenerateOnOwnerRemoved"])
-            // {
-              shared = true;
-            };
-        in
-          (
-            mapAttrs (_: processSecret)
-            (filterAttrs (_: v: elem host v.owners) sharedSecrets)
-          )
-          // (mapAttrs (_: processSecret) (hostSecrets.${host} or {}));
-        _file = ./secrets.nix;
-      };
-    });
   };
   config = {
-    assertions =
-      mapAttrsToList
-      (name: secret: {
-        assertion = secret.expectedOwners == null || sort (a: b: a < b) secret.owners == sort (a: b: a < b) secret.expectedOwners;
-        message = "Shared secret ${name} is expected to be encrypted for ${toJSON secret.expectedOwners}, but it is encrypted for ${toJSON secret.owners}. Run fleet secrets regenerate to fix";
-      })
-      config.sharedSecrets;
+    hosts = mapAttrs (_: secretMap: {
+      nixos.secrets = mapAttrs (_: s: removeAttrs s ["createdAt" "expiresAt"]) secretMap;
+    }) config.data.hostSecrets;
     nixpkgs.overlays = [
       (final: prev: {
         mkSecretGenerators = {recipients}: rec {

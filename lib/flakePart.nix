@@ -7,6 +7,7 @@
   inherit (lib.options) mkOption;
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.types) lazyAttrsOf deferredModule unspecified;
+  inherit (lib.strings) isPath;
   inherit (fleetLib.options) mkHostsOption;
 in {
   options.fleetModules = mkOption {
@@ -36,18 +37,24 @@ in {
           bootstrapNixpkgs = bootstrapEval.config.nixpkgs.buildUsing;
           normalEval = bootstrapNixpkgs.lib.evalModules {
             modules =
-              (import ../modules/fleet/_modules.nix)
+              (import ../modules/module-list.nix)
               ++ [
-                data
                 module
                 {
                   options.hosts = mkHostsOption {
                     nixos.nixpkgs.overlays = [
-                      (final: prev: {
-                        # FIXME: make this name not conflicting
-                        craneLib = crane.mkLib prev;
-                      })
+                      (final: prev:
+                        import ../pkgs {
+                          inherit (prev) callPackage;
+                          craneLib = crane.mkLib prev;
+                        })
                     ];
+                  };
+                  config = {
+                    data =
+                      if isPath data
+                      then import data
+                      else data;
                   };
                 }
               ];

@@ -3,7 +3,6 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/master";
-    nixpkgs-stable-for-tests.url = "github:nixos/nixpkgs/nixos-24.05";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs = {
@@ -33,9 +32,9 @@
           // {
             fleetConfiguration = throw "function-based interface is deprecated, use flake-parts syntax instead";
           };
-        flakeModules.default = (import ./lib/flakePart.nix {
+        flakeModules.default = import ./lib/flakePart.nix {
           inherit crane;
-        });
+        };
         flakeModule = flakeModules.default;
 
         # To be used with https://github.com/NixOS/nix/pull/8892
@@ -92,8 +91,7 @@
         };
         # Reference fleet package should be built with nightly rust, specified in rust-toolchain.toml.
         packages = lib.mkIf deployerSystem (let
-          packages = import ./pkgs {
-            inherit (pkgs) callPackage;
+          packages = pkgs.callPackages ./pkgs {
             inherit craneLib;
           };
         in
@@ -121,14 +119,7 @@
         # fleet-install-secrets will not be built normally, because they are not ran directly by user most of the time.
         # checks there build packages for default nixpkgs rustPlatform packages.
         checks = let
-          packages = import ./pkgs {
-            inherit (pkgs) callPackage;
-            craneLib = crane.mkLib pkgs;
-          };
-          packages-with-nixpkgs-stable = import ./pkgs {
-            inherit (pkgs) callPackage;
-            craneLib = crane.mkLib (import inputs.nixpkgs-stable-for-tests {inherit system;});
-          };
+          packages = pkgs.callPackages ./pkgs {};
           prefixAttrs = prefix: attrs:
             mapAttrs' (name: value: {
               name = "${prefix}${name}";
@@ -139,8 +130,7 @@
             attrs;
         in
           # `fleet` crate wants nightly rust, also little sense of supporting it on stable nixpkgs.
-          (prefixAttrs "nixpkgs-" (removeAttrs packages ["fleet"]))
-          // (prefixAttrs "nixpkgs-stable-" (removeAttrs packages-with-nixpkgs-stable ["fleet"]));
+          (prefixAttrs "nixpkgs-" (removeAttrs packages ["fleet"]));
         formatter = pkgs.alejandra;
       };
     };
