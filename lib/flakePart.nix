@@ -2,6 +2,7 @@
   fleetLib,
   lib,
   config,
+  inputs ? {},
   ...
 }: let
   inherit (lib.options) mkOption;
@@ -58,8 +59,11 @@ in {
                   };
                 }
               ];
-            specialArgs.fleetLib = import ../lib {
-              inherit (bootstrapNixpkgs) lib;
+            specialArgs = {
+              fleetLib = import ../lib {
+                inherit (bootstrapNixpkgs) lib;
+              };
+              inputs = inputs;
             };
           };
         in

@@ -12,7 +12,7 @@ use tokio::{
 	sync::{mpsc, oneshot, Mutex},
 };
 use tokio_util::codec::{FramedRead, LinesCodec};
-use tracing::{debug, error, warn, Level};
+use tracing::{debug, error, info, warn, Level};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -327,8 +327,16 @@ impl NixSessionInner {
 		n.parse::<u64>().map_err(Error::Int)
 	}
 	async fn execute_expression_string(&mut self, expr: impl AsRef<[u8]>) -> Result<String> {
+		// builtins.toJSON escapes some thing in incorrect way, e.g escaped "$" in "\${" is being outputed as "\$",
+		// while this escape should be removed as it is intended for nix itself, not for json output.
+		//
+		// This regex only allows \$ in the beginning of the string, it is easier to implement correctly.
+		// TODO: Add peg parser for nix-produced JSON?..
+		let regex = regex::Regex::new(r#"(?<prefix>[: {,\[]\\")\\\$"#).expect("fixup json");
+
 		let num = self.string_wrapping.clone();
 		let n = self.execute_expression_wrapping(expr, &num).await?;
+		let n = regex.replace_all(&n, "$prefix$$");
 		let str: String = serde_json::from_str(&n)?;
 		Ok(str)
 	}
@@ -339,6 +347,7 @@ impl NixSessionInner {
 		let mut fexpr = b"builtins.toJSON (".to_vec();
 		fexpr.extend_from_slice(expr.as_ref());
 		fexpr.push(b')');
+		let s = String::from_utf8_lossy(expr.as_ref());
 		let v = self.execute_expression_string(fexpr).await?;
 		Ok(serde_json::from_str(&v)?)
 	}

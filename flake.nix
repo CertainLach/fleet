@@ -37,6 +37,8 @@
         };
         flakeModule = flakeModules.default;
 
+        fleetModules.tf = ./modules/extras/tf.nix;
+
         # To be used with https://github.com/NixOS/nix/pull/8892
         schemas = let
           inherit (inputs.nixpkgs.lib) mapAttrs;

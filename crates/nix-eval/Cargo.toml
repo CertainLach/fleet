@@ -11,6 +11,7 @@ futures = "0.3.30"
 itertools = "0.13.0"
 nixlike.workspace = true
 r2d2 = "0.8.10"
+regex = "1.10.6"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror = "1.0.61"

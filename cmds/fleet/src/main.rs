@@ -19,6 +19,7 @@ use cmds::{
 	complete::Complete,
 	info::Info,
 	secrets::Secret,
+	tf::Tf,
 };
 use futures::{future::LocalBoxFuture, stream::FuturesUnordered, TryStreamExt};
 use host::{Config, FleetOpts};
@@ -86,6 +87,8 @@ enum Opts {
 	/// Command completions
 	#[clap(hide(true))]
 	Complete(Complete),
+	/// Compile and evaluate terranix configuration
+	Tf(Tf),
 }
 
 #[derive(Parser)]
@@ -104,6 +107,7 @@ async fn run_command(config: &Config, command: Opts) -> Result<()> {
 		Opts::Secret(s) => s.run(config).await?,
 		Opts::Info(i) => i.run(config).await?,
 		Opts::Prefetch(p) => p.run(config).await?,
+		Opts::Tf(t) => t.run(config).await?,
 		// TODO: actually parse commands before starting the async runtime
 		Opts::Complete(c) => {
 			tokio::task::spawn_blocking(move || c.run(RootOpts::command())).await?
