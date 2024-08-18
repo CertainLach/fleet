@@ -301,8 +301,11 @@ impl ConfigHost {
 
 	/// Packages for this host, resolved with nixpkgs overlays
 	pub async fn pkgs(&self) -> Result<Value> {
-		let nixos = self.nixos_config().await?;
-		Ok(nix_go!(nixos._resolvedPkgs))
+		let Some(host_config) = &self.host_config else {
+			bail!("local host has no host_config");
+		};
+		// TODO: Should nixos.options be cached?
+		Ok(nix_go!(host_config.nixos.options._module.args.value.pkgs))
 	}
 }
 
@@ -395,7 +398,6 @@ impl Config {
 	pub async fn host(&self, name: &str) -> Result<ConfigHost> {
 		let config = &self.config_field;
 		let host_config = nix_go!(config.hosts[{ name }]);
-
 
 		Ok(ConfigHost {
 			config: self.clone(),
