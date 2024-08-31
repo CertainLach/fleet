@@ -12,7 +12,7 @@ use tokio::{
 	sync::{mpsc, oneshot, Mutex},
 };
 use tokio_util::codec::{FramedRead, LinesCodec};
-use tracing::{debug, error, info, warn, Level};
+use tracing::{debug, error, warn, Level};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -147,8 +147,7 @@ impl<H> ErrorCollector<'_, H> {
 		// 	s.split('\n').filter(|s| !s.trim().is_empty()).map(|v| v.)
 		// }
 		if !self.collected.is_empty() {
-			return Err(Error::NixError(format!(
-				"{}",
+			return Err(Error::NixError(
 				self.collected
 					.iter()
 					.map(|v| {
@@ -159,8 +158,9 @@ impl<H> ErrorCollector<'_, H> {
 							v.to_owned()
 						}
 					})
-					.join("\n"),
-			)));
+					.join("\n")
+					.to_string(),
+			));
 		}
 		Ok(())
 	}
@@ -316,7 +316,7 @@ impl NixSessionInner {
 			}
 			out.push_str(&line);
 		}
-		return Err(Error::MissingDelimiter);
+		Err(Error::MissingDelimiter)
 	}
 	pub(crate) async fn execute_expression_number(
 		&mut self,
@@ -347,9 +347,10 @@ impl NixSessionInner {
 		let mut fexpr = b"builtins.toJSON (".to_vec();
 		fexpr.extend_from_slice(expr.as_ref());
 		fexpr.push(b')');
-		let s = String::from_utf8_lossy(expr.as_ref());
-		let v = self.execute_expression_string(fexpr).await?;
-		Ok(serde_json::from_str(&v)?)
+
+		Ok(serde_json::from_str(
+			&self.execute_expression_string(fexpr).await?,
+		)?)
 	}
 	async fn execute_expression_wrapping(
 		&mut self,

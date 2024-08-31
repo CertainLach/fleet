@@ -1,9 +1,9 @@
-use std::str::FromStr;
+use std::str::FromStr as _;
 
 use age::Recipient;
 use anyhow::{anyhow, Result};
-use futures::{StreamExt, TryStreamExt};
-use itertools::Itertools;
+use futures::{StreamExt as _, TryStreamExt as _};
+use itertools::Itertools as _;
 use tracing::warn;
 
 use crate::host::Config;

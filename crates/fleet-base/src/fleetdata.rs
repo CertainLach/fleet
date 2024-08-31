@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use fleet_shared::SecretData;
 use itertools::Itertools;
 use serde::{de::Error, Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +56,11 @@ pub struct FleetData {
 	#[serde(default)]
 	#[serde(skip_serializing_if = "BTreeMap::is_empty")]
 	pub host_secrets: BTreeMap<String, BTreeMap<String, FleetSecret>>,
+
+	// extra_name => anything
+	#[serde(default)]
+	#[serde(skip_serializing_if = "BTreeMap::is_empty")]
+	pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

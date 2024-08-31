@@ -116,6 +116,7 @@
               bacon
               nil
             ];
+            env.PROTOC = "${pkgs.protobuf}/bin/protoc";
           };
         };
         # fleet-install-secrets will not be built normally, because they are not ran directly by user most of the time.

@@ -2,9 +2,8 @@ use std::collections::BTreeSet;
 
 use anyhow::{ensure, Result};
 use clap::Parser;
+use fleet_base::host::Config;
 use nix_eval::nix_go_json;
-
-use crate::host::Config;
 
 #[derive(Parser)]
 pub struct Info {
@@ -39,8 +38,7 @@ impl Info {
 				'host: for host in config.list_hosts().await? {
 					if !tagged.is_empty() {
 						let config = &config.config_field;
-						let tags: Vec<String> =
-							nix_go_json!(config.hosts[{ host.name }].tags);
+						let tags: Vec<String> = nix_go_json!(config.hosts[{ host.name }].tags);
 						for tag in tagged {
 							if !tags.contains(tag) {
 								continue 'host;

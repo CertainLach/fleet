@@ -243,7 +243,7 @@ impl MyCommand {
 	pub async fn run_nix_string(mut self) -> Result<String> {
 		let str = self.clone().into_string();
 		self.arg("--log-format").arg("internal-json");
-		let mut cmd = self.wrap_sudo_if_needed().into_command();
+		let cmd = self.wrap_sudo_if_needed().into_command();
 		let bytes = run_nix_inner_stdout(str, cmd, &mut NixHandler::default()).await?;
 		Ok(String::from_utf8(bytes)?)
 	}

@@ -2,15 +2,14 @@ use std::{env::current_dir, os::unix::fs::symlink, path::PathBuf, time::Duration
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, ValueEnum};
+use fleet_base::{
+	host::{Config, ConfigHost},
+	opts::FleetOpts,
+};
 use itertools::Itertools as _;
 use nix_eval::nix_go;
 use tokio::{task::LocalSet, time::sleep};
 use tracing::{error, field, info, info_span, warn, Instrument};
-
-use crate::{
-	command::MyCommand,
-	host::{Config, ConfigHost},
-};
 
 #[derive(Parser)]
 pub struct Deploy {
@@ -253,7 +252,6 @@ async fn build_task(config: Config, host: String, build_attr: &str) -> Result<Pa
 	info!("building");
 	let host = config.host(&host).await?;
 	// let action = Action::from(self.subcommand.clone());
-	let fleet_config = &config.config_field;
 	let nixos = host.nixos_config().await?;
 	let drv = nix_go!(nixos.system.build[{ build_attr }]);
 	let outputs = drv.build().await.inspect_err(|_| {
@@ -270,12 +268,12 @@ async fn build_task(config: Config, host: String, build_attr: &str) -> Result<Pa
 }
 
 impl BuildSystems {
-	pub async fn run(self, config: &Config) -> Result<()> {
+	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		let hosts = config.list_hosts().await?;
 		let set = LocalSet::new();
 		let build_attr = self.build_attr.clone();
 		for host in hosts.into_iter() {
-			if config.should_skip(&host).await? {
+			if opts.should_skip(&host).await? {
 				continue;
 			}
 			let config = config.clone();
@@ -320,17 +318,18 @@ impl BuildSystems {
 }
 
 impl Deploy {
-	pub async fn run(self, config: &Config) -> Result<()> {
+	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		let hosts = config.list_hosts().await?;
 		let set = LocalSet::new();
 		for host in hosts.into_iter() {
-			if config.should_skip(&host).await? {
+			if opts.should_skip(&host).await? {
 				continue;
 			}
 			let config = config.clone();
 			let span = info_span!("deploy", host = field::display(&host.name));
 			let hostname = host.name.clone();
 			let local_host = config.local_host();
+			let opts = opts.clone();
 			// FIXME: Fix repl concurrency (see build-systems)
 			set.spawn_local(
 				(async move {
@@ -342,7 +341,7 @@ impl Deploy {
 							return;
 						}
 					};
-					if !config.is_local(&hostname) {
+					if !opts.is_local(&hostname) {
 						info!("uploading system closure");
 						{
 							// TODO: Move to remote_derivation method.
@@ -387,7 +386,7 @@ impl Deploy {
 						self.action,
 						&host,
 						built,
-						if let Ok(v) = config.action_attr(&host, "specialisation").await {
+						if let Ok(v) = opts.action_attr(&host, "specialisation").await {
 							v
 						} else {
 							error!("unreachable? failed to get specialization");

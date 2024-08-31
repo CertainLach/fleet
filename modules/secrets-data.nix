@@ -6,8 +6,8 @@
 }: let
   inherit (fleetLib.options) mkDataOption;
   inherit (lib.options) mkOption;
-  inherit (lib.types) lazyAttrsOf nullOr listOf str attrsOf submodule bool;
-  inherit (lib.attrsets) mapAttrsToList mapAttrs catAttrs filterAttrs genAttrs;
+  inherit (lib.types) nullOr listOf str attrsOf submodule bool;
+  inherit (lib.attrsets) mapAttrsToList mapAttrs filterAttrs genAttrs;
   inherit (lib.lists) sort unique concatLists;
   inherit (lib.strings) toJSON;
 

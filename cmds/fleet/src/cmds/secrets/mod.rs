@@ -1,6 +1,5 @@
 use std::{
 	collections::{BTreeMap, BTreeSet, HashSet},
-	ffi::OsString,
 	io::{self, stdin, stdout, Read, Write},
 	path::PathBuf,
 };
@@ -8,20 +7,18 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::Parser;
-use crossterm::{terminal, tty::IsTty};
+use fleet_base::{
+	fleetdata::{encrypt_secret_data, FleetSecret, FleetSecretPart, FleetSharedSecret},
+	host::Config,
+	opts::FleetOpts,
+};
 use fleet_shared::SecretData;
-use itertools::Itertools;
 use nix_eval::{nix_go, nix_go_json, Value};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use tabled::{Table, Tabled};
-use tokio::{fs::read, process::Command};
+use tokio::fs::read;
 use tracing::{error, info, info_span, warn, Instrument};
-
-use crate::{
-	fleetdata::{encrypt_secret_data, FleetSecret, FleetSecretPart, FleetSharedSecret},
-	host::Config,
-};
 
 #[derive(Parser)]
 pub enum Secret {
@@ -432,11 +429,11 @@ fn parse_machines(
 	Ok(target_machines)
 }
 impl Secret {
-	pub async fn run(self, config: &Config) -> Result<()> {
+	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		match self {
 			Secret::ForceKeys => {
 				for host in config.list_hosts().await? {
-					if config.should_skip(&host).await? {
+					if opts.should_skip(&host).await? {
 						continue;
 					}
 					config.key(&host.name).await?;
@@ -639,7 +636,7 @@ impl Secret {
 					}
 				}
 				for host in config.list_hosts().await? {
-					if config.should_skip(&host).await? {
+					if opts.should_skip(&host).await? {
 						continue;
 					}
 
@@ -757,6 +754,7 @@ impl Secret {
 	}
 }
 
+/*
 async fn edit_temp_file(
 	builder: tempfile::Builder<'_, '_>,
 	r: Vec<u8>,
@@ -835,3 +833,4 @@ async fn edit_temp_file(
 
 	// Ok((success, abs_path))
 }
+*/

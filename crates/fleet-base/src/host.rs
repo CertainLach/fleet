@@ -1,7 +1,5 @@
 use std::{
-	cell::{LazyCell, OnceCell},
-	collections::BTreeMap,
-	env::current_dir,
+	cell::OnceCell,
 	ffi::{OsStr, OsString},
 	fmt::Display,
 	io::Write,
@@ -12,20 +10,11 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use clap::Parser;
 use fleet_shared::SecretData;
-use nix_eval::{nix_go, nix_go_json, util::assert_warn, NixSessionPool, Value};
-use nom::{
-	bytes::complete::take_while1,
-	character::complete::char,
-	combinator::{map, opt},
-	multi::separated_list1,
-	sequence::{preceded, separated_pair},
-};
+use nix_eval::{nix_go, nix_go_json, util::assert_warn, Value};
 use openssh::SessionBuilder;
 use serde::de::DeserializeOwned;
 use tempfile::NamedTempFile;
-use tracing::error;
 
 use crate::{
 	command::MyCommand,
@@ -35,18 +24,20 @@ use crate::{
 pub struct FleetConfigInternals {
 	pub local_system: String,
 	pub directory: PathBuf,
-	pub opts: FleetOpts,
 	pub data: Mutex<FleetData>,
 	pub nix_args: Vec<OsString>,
 	/// fleet_config.config
 	pub config_field: Value,
+	// TODO: Remove with connectivity refactor
+	pub localhost: String,
 
 	/// import nixpkgs {system = local};
 	pub default_pkgs: Value,
 }
 
+// TODO: Make field not pub
 #[derive(Clone)]
-pub struct Config(Arc<FleetConfigInternals>);
+pub struct Config(pub Arc<FleetConfigInternals>);
 
 impl Deref for Config {
 	type Target = FleetConfigInternals;
@@ -66,53 +57,27 @@ pub enum EscalationStrategy {
 pub struct ConfigHost {
 	config: Config,
 	pub name: String,
-	pub local: bool,
-	pub session: OnceLock<Arc<openssh::Session>>,
 	groups: OnceCell<Vec<String>>,
 
 	pub host_config: Option<Value>,
 	pub nixos_config: OnceCell<Value>,
+
+	// TODO: Move command helpers away with connectivity refactor
+	pub local: bool,
+	pub session: OnceLock<Arc<openssh::Session>>,
 }
+// TODO: Move command helpers away with connectivity refactor
 impl ConfigHost {
 	pub async fn escalation_strategy(&self) -> Result<EscalationStrategy> {
 		// Prefer sudo, as run0 has some gotchas with polkit
 		// and too many repeating prompts.
-		if let Ok(_) = self.find_in_path("sudo").await {
+		if (self.find_in_path("sudo").await).is_ok() {
 			return Ok(EscalationStrategy::Sudo);
 		}
-		if let Ok(_) = self.find_in_path("run0").await {
+		if (self.find_in_path("run0").await).is_ok() {
 			return Ok(EscalationStrategy::Run0);
 		}
 		Ok(EscalationStrategy::Su)
-	}
-	// TOCTOU is possible here in case if config is changed, but this case is not handled anywhere anyway,
-	// assuming getting tags always returns the same value.
-	pub async fn tags(&self) -> Result<Vec<String>> {
-		if let Some(v) = self.groups.get() {
-			return Ok(v.clone());
-		}
-		let Some(host_config) = &self.host_config else {
-			return Ok(vec![]);
-		};
-		let tags: Vec<String> = nix_go_json!(host_config.tags);
-
-		let _ = self.groups.set(tags.clone());
-
-		Ok(tags)
-	}
-	pub async fn nixos_config(&self) -> Result<Value> {
-		if let Some(v) = self.nixos_config.get() {
-			return Ok(v.clone());
-		}
-		let Some(host_config) = &self.host_config else {
-			bail!("local host has no nixos_config");
-		};
-		let nixos_config = nix_go!(host_config.nixos.config);
-		assert_warn("nixos config evaluation", &nixos_config).await?;
-
-		let _ = self.nixos_config.set(nixos_config.clone());
-
-		Ok(nixos_config)
 	}
 	async fn open_session(&self) -> Result<Arc<openssh::Session>> {
 		assert!(!self.local, "do not open ssh connection to local session");
@@ -120,7 +85,7 @@ impl ConfigHost {
 		if let Some(session) = &self.session.get() {
 			return Ok((*session).clone());
 		};
-		let mut session = SessionBuilder::default();
+		let session = SessionBuilder::default();
 		let session = session
 			.connect(&self.name)
 			.await
@@ -163,7 +128,7 @@ impl ConfigHost {
 	pub async fn read_env(&self, env: &str) -> Result<String> {
 		let mut cmd = self.cmd("printenv").await?;
 		cmd.arg(env);
-		Ok(cmd.run_string().await?)
+		cmd.run_string().await
 	}
 	pub async fn find_in_path(&self, command: &str) -> Result<String> {
 		// // `which` is not a part of coreutils, and it might not exist on machine.
@@ -279,6 +244,37 @@ impl ConfigHost {
 		}
 		cmd.run().await
 	}
+}
+impl ConfigHost {
+	// TOCTOU is possible here in case if config is changed, but this case is not handled anywhere anyway,
+	// assuming getting tags always returns the same value.
+	pub async fn tags(&self) -> Result<Vec<String>> {
+		if let Some(v) = self.groups.get() {
+			return Ok(v.clone());
+		}
+		let Some(host_config) = &self.host_config else {
+			return Ok(vec![]);
+		};
+		let tags: Vec<String> = nix_go_json!(host_config.tags);
+
+		let _ = self.groups.set(tags.clone());
+
+		Ok(tags)
+	}
+	pub async fn nixos_config(&self) -> Result<Value> {
+		if let Some(v) = self.nixos_config.get() {
+			return Ok(v.clone());
+		}
+		let Some(host_config) = &self.host_config else {
+			bail!("local host has no nixos_config");
+		};
+		let nixos_config = nix_go!(host_config.nixos.config);
+		assert_warn("nixos config evaluation", &nixos_config).await?;
+
+		let _ = self.nixos_config.set(nixos_config.clone());
+
+		Ok(nixos_config)
+	}
 
 	pub async fn list_configured_secrets(&self) -> Result<Vec<String>> {
 		let nixos = self.nixos_config().await?;
@@ -310,75 +306,6 @@ impl ConfigHost {
 }
 
 impl Config {
-	pub async fn should_skip(&self, host: &ConfigHost) -> Result<bool> {
-		if !self.opts.skip.is_empty() && self.opts.skip.iter().any(|h| h as &str == host.name) {
-			return Ok(true);
-		}
-		if self.opts.only.is_empty() {
-			return Ok(false);
-		}
-		let mut have_group_matches = false;
-		for item in self.opts.only.iter() {
-			match item {
-				HostItem::Host { name, .. } if *name == host.name => {
-					return Ok(false);
-				}
-				HostItem::Tag { .. } => {
-					have_group_matches = true;
-				}
-				_ => {}
-			}
-		}
-		if have_group_matches {
-			let host_tags = host.tags().await?;
-			for item in self.opts.only.iter() {
-				match item {
-					HostItem::Tag { name, .. } if host_tags.contains(name) => {
-						return Ok(false);
-					}
-					_ => {}
-				}
-			}
-		}
-		Ok(true)
-	}
-	pub async fn action_attr(&self, host: &ConfigHost, attr: &str) -> Result<Option<String>> {
-		if self.opts.only.is_empty() {
-			return Ok(None);
-		}
-		let mut have_group_matches = false;
-		for item in self.opts.only.iter() {
-			match item {
-				HostItem::Host { name, attrs }
-					if *name == host.name && attrs.contains_key(attr) =>
-				{
-					return Ok(attrs.get(attr).cloned());
-				}
-				HostItem::Tag { attrs, .. } if attrs.contains_key(attr) => {
-					have_group_matches = true;
-				}
-				_ => {}
-			}
-		}
-		if have_group_matches {
-			let host_tags = host.tags().await?;
-			for item in self.opts.only.iter() {
-				match item {
-					HostItem::Tag { name, attrs }
-						if host_tags.contains(name) && attrs.contains_key(attr) =>
-					{
-						return Ok(attrs.get(attr).cloned());
-					}
-					_ => {}
-				}
-			}
-		}
-		Ok(None)
-	}
-	pub fn is_local(&self, host: &str) -> bool {
-		self.opts.localhost.as_ref().map(|s| s as &str) == Some(host)
-	}
-
 	pub fn local_host(&self) -> ConfigHost {
 		ConfigHost {
 			config: self.clone(),
@@ -402,11 +329,13 @@ impl Config {
 		Ok(ConfigHost {
 			config: self.clone(),
 			name: name.to_owned(),
-			local: self.is_local(name),
-			session: OnceLock::new(),
 			host_config: Some(host_config),
 			nixos_config: OnceCell::new(),
 			groups: OnceCell::new(),
+			
+			// TODO: Remove with connectivit refactor
+			local: self.localhost == name,
+			session: OnceLock::new(),
 		})
 	}
 	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {
@@ -418,17 +347,12 @@ impl Config {
 		}
 		Ok(out)
 	}
+	// TODO: Replace usages with .host().nixos_config
 	pub async fn system_config(&self, host: &str) -> Result<Value> {
 		let fleet_field = &self.config_field;
 		Ok(nix_go!(fleet_field.hosts[{ host }].nixos.config))
 	}
 
-	pub(super) fn data(&self) -> MutexGuard<FleetData> {
-		self.data.lock().unwrap()
-	}
-	pub(super) fn data_mut(&self) -> MutexGuard<FleetData> {
-		self.data.lock().unwrap()
-	}
 	/// Shared secrets configured in fleet.nix or in flake
 	pub async fn list_configured_shared(&self) -> Result<Vec<String>> {
 		let config_field = &self.config_field;
@@ -497,6 +421,19 @@ impl Config {
 		))
 	}
 
+	// TODO: Should this be something modifiable from other processes?
+	// E.g terraform provider might want to update FleetData (e.g secrets),
+	// and current implementation assumes only one process holds current fleet.nix
+	// Given that it is no longer needs to be a file for nix evaluation,
+	// maybe it can be a .nix file for persistence, but accessible only
+	// thru some shared state controller? Might it be stored in terraform
+	// state provider?
+	pub fn data(&self) -> MutexGuard<FleetData> {
+		self.data.lock().unwrap()
+	}
+	pub fn data_mut(&self) -> MutexGuard<FleetData> {
+		self.data.lock().unwrap()
+	}
 	pub fn save(&self) -> Result<()> {
 		let mut tempfile = NamedTempFile::new_in(self.directory.clone()).context("failed to create updated version of fleet.nix in the same directory as original.\nDo you have write access to it? Access only to the fleet.nix won't be enough, the directory is used for atomic overwrite operation.\nIt is not recommended to use fleet by root anyway, move fleet project to your home directory.")?;
 		let data = nixlike::serialize(&self.data() as &FleetData)?;
@@ -511,120 +448,5 @@ impl Config {
 		fleet_data_path.push("fleet.nix");
 		tempfile.persist(fleet_data_path)?;
 		Ok(())
-	}
-}
-
-#[derive(Clone)]
-enum HostItem {
-	Host {
-		name: String,
-		attrs: BTreeMap<String, String>,
-	},
-	Tag {
-		name: String,
-		attrs: BTreeMap<String, String>,
-	},
-}
-fn host_item_parser(input: &str) -> Result<HostItem, String> {
-	fn err_to_string(err: nom::Err<nom::error::Error<&str>>) -> String {
-		err.to_string()
-	}
-
-	let (input, is_tag) = map(opt(char('@')), |c| c.is_some())(input).map_err(err_to_string)?;
-	let (input, name) = map(
-		take_while1(|v| v != ',' && v != '?' && v != '@'),
-		str::to_owned,
-	)(input)
-	.map_err(err_to_string)?;
-
-	let kw_item = separated_pair(
-		map(take_while1(|v| v != '&' && v != '='), str::to_owned),
-		char('='),
-		map(take_while1(|v| v != '&'), str::to_owned),
-	);
-	let kw = map(separated_list1(char('&'), kw_item), |vec| {
-		vec.into_iter().collect::<BTreeMap<_, _>>()
-	});
-	let mut opt_kw = map(opt(preceded(char('?'), kw)), Option::unwrap_or_default);
-
-	let (input, attrs) = opt_kw(input).map_err(err_to_string)?;
-
-	if !input.is_empty() {
-		return Err(format!("unexpected trailing input: {input:?}"));
-	}
-	Ok(if is_tag {
-		HostItem::Tag { name, attrs }
-	} else {
-		HostItem::Host { name, attrs }
-	})
-}
-
-#[derive(Parser, Clone)]
-pub struct FleetOpts {
-	/// All hosts except those would be skipped
-	#[clap(long, number_of_values = 1, value_parser = host_item_parser)]
-	only: Vec<HostItem>,
-
-	/// Hosts to skip
-	#[clap(long, number_of_values = 1)]
-	skip: Vec<String>,
-
-	/// Host, which should be threaten as current machine
-	#[clap(long)]
-	pub localhost: Option<String>,
-
-	/// Override detected system for host, to perform builds via
-	/// binfmt-declared qemu instead of trying to crosscompile
-	#[clap(long, default_value = "detect")]
-	pub local_system: String,
-}
-
-impl FleetOpts {
-	pub async fn build(mut self, nix_args: Vec<OsString>) -> Result<Config> {
-		if self.localhost.is_none() {
-			self.localhost
-				.replace(hostname::get().unwrap().to_str().unwrap().to_owned());
-		}
-		let directory = current_dir()?;
-
-		let pool = NixSessionPool::new(directory.as_os_str().to_owned(), nix_args.clone()).await?;
-		let root_field = pool.get().await?;
-
-		let builtins_field = Value::binding(root_field.clone(), "builtins").await?;
-		if self.local_system == "detect" {
-			self.local_system = nix_go_json!(builtins_field.currentSystem);
-		}
-		let local_system = self.local_system.clone();
-
-		let mut fleet_data_path = directory.clone();
-		fleet_data_path.push("fleet.nix");
-		let bytes = std::fs::read_to_string(fleet_data_path)?;
-		let data: Mutex<FleetData> = nixlike::parse_str(&bytes)?;
-
-		let fleet_root = Value::binding(root_field, "fleetConfigurations").await?;
-		let fleet_field = nix_go!(fleet_root.default({ data }));
-
-		let config_field = nix_go!(fleet_field.config);
-
-		assert_warn("fleet config evaluation", &config_field).await?;
-
-		let import = nix_go!(builtins_field.import);
-		let overlays = nix_go!(config_field.nixpkgs.overlays);
-		let nixpkgs = nix_go!(fleet_field.nixpkgs.buildUsing | import);
-
-		let default_pkgs = nix_go!(nixpkgs(Obj {
-			overlays,
-			system: { self.local_system.clone() },
-		}));
-
-		Ok(Config(Arc::new(FleetConfigInternals {
-			opts: self,
-			directory,
-			data,
-			local_system,
-			nix_args,
-			config_field,
-			default_pkgs,
-		})))
 	}
 }

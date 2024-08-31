@@ -2,13 +2,8 @@
 #![feature(try_blocks)]
 
 pub(crate) mod cmds;
-pub(crate) mod command;
-pub(crate) mod host;
-pub(crate) mod keys;
-
+// pub(crate) mod command;
 pub(crate) mod extra_args;
-
-mod fleetdata;
 
 use std::{ffi::OsString, process::ExitCode};
 
@@ -21,8 +16,9 @@ use cmds::{
 	secrets::Secret,
 	tf::Tf,
 };
+use fleet_base::{host::Config, opts::FleetOpts};
 use futures::{future::LocalBoxFuture, stream::FuturesUnordered, TryStreamExt};
-use host::{Config, FleetOpts};
+// use host::Config;
 #[cfg(feature = "indicatif")]
 use human_repr::HumanCount;
 #[cfg(feature = "indicatif")]
@@ -31,8 +27,6 @@ use tracing::{error, info, info_span, Instrument};
 #[cfg(feature = "indicatif")]
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::{prelude::*, EnvFilter};
-
-use crate::command::MyCommand;
 
 #[derive(Parser)]
 struct Prefetch {}
@@ -88,6 +82,7 @@ enum Opts {
 	#[clap(hide(true))]
 	Complete(Complete),
 	/// Compile and evaluate terranix configuration
+	#[clap(subcommand)]
 	Tf(Tf),
 }
 
@@ -100,11 +95,11 @@ struct RootOpts {
 	command: Opts,
 }
 
-async fn run_command(config: &Config, command: Opts) -> Result<()> {
+async fn run_command(config: &Config, opts: FleetOpts, command: Opts) -> Result<()> {
 	match command {
-		Opts::BuildSystems(c) => c.run(config).await?,
-		Opts::Deploy(d) => d.run(config).await?,
-		Opts::Secret(s) => s.run(config).await?,
+		Opts::BuildSystems(c) => c.run(config, &opts).await?,
+		Opts::Deploy(d) => d.run(config, &opts).await?,
+		Opts::Secret(s) => s.run(config, &opts).await?,
 		Opts::Info(i) => i.run(config).await?,
 		Opts::Prefetch(p) => p.run(config).await?,
 		Opts::Tf(t) => t.run(config).await?,
@@ -211,7 +206,7 @@ async fn main_real(opts: RootOpts) -> Result<()> {
 		.unwrap_or_default();
 	let config = opts.fleet_opts.build(nix_args).await?;
 
-	match run_command(&config, opts.command).await {
+	match run_command(&config, opts.fleet_opts, opts.command).await {
 		Ok(()) => {
 			config.save()?;
 			Ok(())
