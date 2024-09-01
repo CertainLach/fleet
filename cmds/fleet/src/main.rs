@@ -82,7 +82,6 @@ enum Opts {
 	#[clap(hide(true))]
 	Complete(Complete),
 	/// Compile and evaluate terranix configuration
-	#[clap(subcommand)]
 	Tf(Tf),
 }
 
