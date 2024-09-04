@@ -98,6 +98,23 @@
           };
         in
           packages // {default = packages.fleet;});
+        # fleet-install-secrets will not be built normally, because they are not ran directly by user most of the time.
+        # checks there build packages for default nixpkgs rustPlatform packages.
+        checks = let
+          packages = pkgs.callPackages ./pkgs {
+            inherit craneLib;
+          };
+          prefixAttrs = prefix: attrs:
+            mapAttrs' (name: value: {
+              name = "${prefix}${name}";
+              value = value.overrideAttrs (prev: {
+                pname = "${prefix}${prev.pname}";
+              });
+            })
+            attrs;
+        in
+          # `fleet` crate wants nightly rust, also little sense of supporting it on stable nixpkgs.
+          (prefixAttrs "nixpkgs-" (removeAttrs packages ["fleet"]));
         # TODO: It should be possible to move lib.mkIf to default attribute, instead of disabling the whole
         # devShells block, yet nix flake check fails here, due to no default shell found. It is nix or flake-parts bug?
         devShells = lib.mkIf deployerSystem {
@@ -119,21 +136,6 @@
             env.PROTOC = "${pkgs.protobuf}/bin/protoc";
           };
         };
-        # fleet-install-secrets will not be built normally, because they are not ran directly by user most of the time.
-        # checks there build packages for default nixpkgs rustPlatform packages.
-        checks = let
-          packages = pkgs.callPackages ./pkgs {};
-          prefixAttrs = prefix: attrs:
-            mapAttrs' (name: value: {
-              name = "${prefix}${name}";
-              value = value.overrideAttrs (prev: {
-                pname = "${prefix}${prev.pname}";
-              });
-            })
-            attrs;
-        in
-          # `fleet` crate wants nightly rust, also little sense of supporting it on stable nixpkgs.
-          (prefixAttrs "nixpkgs-" (removeAttrs packages ["fleet"]));
         formatter = pkgs.alejandra;
       };
     };
