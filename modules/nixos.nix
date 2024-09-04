@@ -1,6 +1,7 @@
 {
   lib,
   fleetLib,
+  inputs,
   config,
   ...
 }: let
@@ -35,7 +36,7 @@ in {
                 (config.nixos // {key = "attr<fleet.nixos>";})
               ];
               specialArgs = {
-                inherit fleetLib;
+                inherit fleetLib inputs;
               };
             };
         };

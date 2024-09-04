@@ -60,10 +60,10 @@ in {
                 }
               ];
             specialArgs = {
+              inherit inputs;
               fleetLib = import ../lib {
                 inherit (bootstrapNixpkgs) lib;
               };
-              inputs = inputs;
             };
           };
         in
