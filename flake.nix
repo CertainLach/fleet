@@ -75,7 +75,7 @@
         pkgs,
         ...
       }: let
-        inherit (lib.attrSets) mapAttrs';
+        inherit (lib.attrsets) mapAttrs';
         inherit (lib.lists) elem;
         # Can also be built for darwin, through it is not usual to deploy nixos systems from macos machines.
         # I have no hardware for such testing, thus only adding machines I actually have and use.
