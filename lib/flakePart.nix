@@ -9,7 +9,6 @@
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.types) lazyAttrsOf deferredModule unspecified;
   inherit (lib.strings) isPath;
-  inherit (fleetLib.options) mkHostsOption;
 in {
   options.fleetModules = mkOption {
     type = lazyAttrsOf unspecified;
@@ -42,20 +41,18 @@ in {
               ++ [
                 module
                 {
-                  options.hosts = mkHostsOption {
-                    nixos.nixpkgs.overlays = [
+                  config = {
+                    data =
+                      if isPath data
+                      then import data
+                      else data;
+                    nixpkgs.overlays = [
                       (final: prev:
                         import ../pkgs {
                           inherit (prev) callPackage;
                           craneLib = crane.mkLib prev;
                         })
                     ];
-                  };
-                  config = {
-                    data =
-                      if isPath data
-                      then import data
-                      else data;
                   };
                 }
               ];

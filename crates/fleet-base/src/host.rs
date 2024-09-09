@@ -61,6 +61,7 @@ pub struct ConfigHost {
 
 	pub host_config: Option<Value>,
 	pub nixos_config: OnceCell<Value>,
+	pub pkgs_override: Option<Value>,
 
 	// TODO: Move command helpers away with connectivity refactor
 	pub local: bool,
@@ -297,6 +298,9 @@ impl ConfigHost {
 
 	/// Packages for this host, resolved with nixpkgs overlays
 	pub async fn pkgs(&self) -> Result<Value> {
+		if let Some(value) = &self.pkgs_override {
+			return Ok(value.clone());
+		}
 		let Some(host_config) = &self.host_config else {
 			bail!("local host has no host_config");
 		};
@@ -310,8 +314,6 @@ impl Config {
 		ConfigHost {
 			config: self.clone(),
 			name: "<virtual localhost>".to_owned(),
-			local: true,
-			session: OnceLock::new(),
 			host_config: None,
 			nixos_config: OnceCell::new(),
 			groups: {
@@ -319,6 +321,10 @@ impl Config {
 				let _ = cell.set(vec![]);
 				cell
 			},
+			pkgs_override: Some(self.default_pkgs.clone()),
+
+			local: true,
+			session: OnceLock::new(),
 		}
 	}
 
@@ -332,7 +338,8 @@ impl Config {
 			host_config: Some(host_config),
 			nixos_config: OnceCell::new(),
 			groups: OnceCell::new(),
-			
+			pkgs_override: None,
+
 			// TODO: Remove with connectivit refactor
 			local: self.localhost == name,
 			session: OnceLock::new(),
