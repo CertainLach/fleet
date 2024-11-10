@@ -30,68 +30,79 @@ An NixOS cluster deployment tool.
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
-  outputs = inputs: flake-parts.lib.mkFlake { inherit inputs; } {
-    imports = [inputs.fleet.flakeModules.default];
+  outputs = inputs @ {
+    nixpkgs,
+    flake-parts,
+    lanzaboote,
+    ...
+  }:
+    flake-parts.lib.mkFlake {inherit inputs;} {
+      imports = [inputs.fleet.flakeModules.default];
 
-    perSystem = {pkgs, system, ...}: {
-      _module.args.pkgs = import nixpkgs { inherit system; };
+      perSystem = {
+        pkgs,
+        system,
+        ...
+      }: {
+        _module.args.pkgs = import nixpkgs {inherit system;};
 
-      formatter = pkgs.alejandra;
-      devShells.default = pkgs.mkShell {
-        packages = [
-          inputs.fleet.packages.${system}.fleet
-        ];
+        formatter = pkgs.alejandra;
+        devShells.default = pkgs.mkShell {
+          packages = [inputs.fleet.packages.${system}.fleet];
+        };
       };
-    };
 
-    # Single flake may contain multiple fleet configurations, default one is called... `default`
-    fleetConfigurations.default = {
-      # nixpkgs used to build the systems
-      nixpkgs.buildUsing = nixpkgs;
-      
-      # nixos option section of fleet config declares module, which is used for all configured nixos hosts.
-      nixos.imports = [
-        lanzaboote.nixosModules.lanzaboote
-        {
-          # Make `nix shell nixpkgs#thing` use the same nixpkgs, as used to build the system.
-          nix.registry.nixpkgs = {
-            from = { id = "nixpkgs"; type = "indirect"; };
-            flake = nixpkgs;
-            exact = false;
-          };
-        }
-      ];
+      # Single flake may contain multiple fleet configurations, default one is called... `default`
+      fleetConfigurations.default = {
+        # nixpkgs used to build the systems
+        nixpkgs.buildUsing = nixpkgs;
 
-      # Those modules are used to configure all the machines in cluster at the same time, good example of global modules
-      # Is I.e wiring up the mesh VPN, or deploying kubernetes, or other things.
-      #
-      # Modules use the same semantics as standard nixos module system, they are just configuring all the hosts at once.
-      imports = [
-        ./wireguard
-        # Multi-instancible modules example
-        (import ./kubernetes {hosts = ["a" "b"];})
-        (import ./kubernetes {hosts = ["c" "d"];})
-      ];
-
-      # Hosts attribute (may also be defined/extended using modules attribute) configures hosts...
-      hosts.controlplane-1 = {
-        # Every host has some system, for which the system configuration needs to be built
-        system = "x86_64-linux";
-        # And nixos modules
+        # nixos option section of fleet config declares module, which is used for all configured nixos hosts.
         nixos.imports = [
-          ./controlplane-1/hardware-configuration.nix
-          ./controlplane-1/configuration.nix
-          # Configuration may also be specified inline, as in any nixos config.
+          lanzaboote.nixosModules.lanzaboote
           {
-            services.ray = {
-              gpus = 4;
-              cpus = 128;
+            # Make `nix shell nixpkgs#thing` use the same nixpkgs, as used to build the system.
+            nix.registry.nixpkgs = {
+              from = {
+                id = "nixpkgs";
+                type = "indirect";
+              };
+              flake = nixpkgs;
+              exact = false;
             };
           }
         ];
+
+        # Those modules are used to configure all the machines in cluster at the same time, good example of global modules
+        # Is I.e wiring up the mesh VPN, or deploying kubernetes, or other things.
+        #
+        # Modules use the same semantics as standard nixos module system, they are just configuring all the hosts at once.
+        imports = [
+          ./wireguard
+          # Multi-instancible modules example
+          (import ./kubernetes {hosts = ["a" "b"];})
+          (import ./kubernetes {hosts = ["c" "d"];})
+        ];
+
+        # Hosts attribute (may also be defined/extended using modules attribute) configures hosts...
+        hosts.controlplane-1 = {
+          # Every host has some system, for which the system configuration needs to be built
+          system = "x86_64-linux";
+          # And nixos modules
+          nixos.imports = [
+            ./controlplane-1/hardware-configuration.nix
+            ./controlplane-1/configuration.nix
+            # Configuration may also be specified inline, as in any nixos config.
+            {
+              services.ray = {
+                gpus = 4;
+                cpus = 128;
+              };
+            }
+          ];
+        };
       };
     };
-  };
 }
 ----
 
