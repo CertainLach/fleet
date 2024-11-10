@@ -30,48 +30,40 @@ An NixOS cluster deployment tool.
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
-  outputs = inputs @ {
-    nixpkgs,
-    flake-parts,
-    lanzaboote,
-    ...
-  }:
-    flake-parts.lib.mkFlake {inherit inputs;} {
+  outputs = inputs:
+    inputs.flake-parts.lib.mkFlake {inherit inputs;} {
       imports = [inputs.fleet.flakeModules.default];
 
       perSystem = {
+        inputs',
         pkgs,
         system,
         ...
       }: {
-        _module.args.pkgs = import nixpkgs {inherit system;};
-
         formatter = pkgs.alejandra;
-        devShells.default = pkgs.mkShell {
-          packages = [inputs.fleet.packages.${system}.fleet];
-        };
+        devShells.default =
+          pkgs.mkShell {packages = [inputs'.fleet.packages.fleet];};
       };
 
       # Single flake may contain multiple fleet configurations, default one is called... `default`
       fleetConfigurations.default = {
         # nixpkgs used to build the systems
-        nixpkgs.buildUsing = nixpkgs;
+        nixpkgs.buildUsing = inputs.nixpkgs;
 
         # nixos option section of fleet config declares module, which is used for all configured nixos hosts.
-        nixos.imports = [
-          lanzaboote.nixosModules.lanzaboote
-          {
-            # Make `nix shell nixpkgs#thing` use the same nixpkgs, as used to build the system.
-            nix.registry.nixpkgs = {
-              from = {
-                id = "nixpkgs";
-                type = "indirect";
-              };
-              flake = nixpkgs;
-              exact = false;
+        nixos = {
+          imports = [inputs.lanzaboote.nixosModules.lanzaboote];
+
+          # Make `nix shell nixpkgs#thing` use the same nixpkgs, as used to build the system.
+          nix.registry.nixpkgs = {
+            from = {
+              id = "nixpkgs";
+              type = "indirect";
             };
-          }
-        ];
+            flake = inputs.nixpkgs;
+            exact = false;
+          };
+        };
 
         # Those modules are used to configure all the machines in cluster at the same time, good example of global modules
         # Is I.e wiring up the mesh VPN, or deploying kubernetes, or other things.
@@ -88,18 +80,18 @@ An NixOS cluster deployment tool.
         hosts.controlplane-1 = {
           # Every host has some system, for which the system configuration needs to be built
           system = "x86_64-linux";
-          # And nixos modules
-          nixos.imports = [
-            ./controlplane-1/hardware-configuration.nix
-            ./controlplane-1/configuration.nix
+          nixos = {
+            # And nixos modules
+            imports = [
+              ./controlplane-1/hardware-configuration.nix
+              ./controlplane-1/configuration.nix
+            ];
             # Configuration may also be specified inline, as in any nixos config.
-            {
-              services.ray = {
-                gpus = 4;
-                cpus = 128;
-              };
-            }
-          ];
+            services.ray = {
+              gpus = 4;
+              cpus = 128;
+            };
+          };
         };
       };
     };
