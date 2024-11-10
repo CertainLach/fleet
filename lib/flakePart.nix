@@ -74,6 +74,7 @@ in {
               fleetLib = import ../lib {
                 inherit (bootstrapNixpkgs) lib;
               };
+              _fleetFlakeRootConfig = config;
             };
           };
         in

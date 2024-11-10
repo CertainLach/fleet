@@ -3,12 +3,14 @@
   fleetLib,
   inputs,
   config,
+  _fleetFlakeRootConfig,
   ...
 }: let
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.options) mkOption;
   inherit (lib.types) deferredModule;
   inherit (lib.modules) mkRemovedOptionModule;
+  inherit (lib.strings) escapeNixIdentifier;
   inherit (fleetLib.options) mkHostsOption;
 
   _file = ./nixos.nix;
@@ -28,15 +30,25 @@ in {
             Nixos configuration for the current host.
           '';
           type = deferredModule;
-          apply = module:
+          apply = module: let
+            inherit (hostArgs.config) system;
+          in
             config.nixpkgs.buildUsing.lib.nixosSystem {
-              inherit (hostArgs.config) system;
+              inherit system;
               modules = [
                 (module // {key = "attr<host.nixos>";})
                 (config.nixos // {key = "attr<fleet.nixos>";})
               ];
               specialArgs = {
                 inherit fleetLib inputs;
+                inputs' = mapAttrs (inputName: input:
+                  builtins.addErrorContext "while retrieving system-dependent attributes for input ${escapeNixIdentifier inputName}"
+                  (
+                    if input._type or null == "flake"
+                    then _fleetFlakeRootConfig.perInput system input
+                    else "input is not a flake, perhaps flake = false was added to te input declaration?"
+                  ))
+                inputs;
               };
             };
         };
