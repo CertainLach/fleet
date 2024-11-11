@@ -2,6 +2,7 @@
   lib,
   fleetLib,
   inputs,
+  self,
   config,
   _fleetFlakeRootConfig,
   ...
@@ -40,7 +41,7 @@ in {
                 (config.nixos // {key = "attr<fleet.nixos>";})
               ];
               specialArgs = {
-                inherit fleetLib inputs;
+                inherit fleetLib inputs self;
                 inputs' = mapAttrs (inputName: input:
                   builtins.addErrorContext "while retrieving system-dependent attributes for input ${escapeNixIdentifier inputName}"
                   (
@@ -49,6 +50,7 @@ in {
                     else "input is not a flake, perhaps flake = false was added to te input declaration?"
                   ))
                 inputs;
+                self' = builtins.addErrorContext "while retrieving system-dependent attributes for a flake's own outputs" (_fleetFlakeRootConfig.perInput system self);
               };
             };
         };
