@@ -10,7 +10,7 @@
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.types) lazyAttrsOf deferredModule unspecified str;
   inherit (lib.strings) isPath;
-  inherit (lib.modules) mkIf;
+  inherit (lib.modules) mkIf mkOptionDefault;
 in {
   options.fleetModules = mkOption {
     type = lazyAttrsOf unspecified;
@@ -44,7 +44,10 @@ in {
                     Nixpkgs to use for fleetConfiguration evaluation.
                   '';
                 };
-                config._module.check = false;
+                config = {
+                  _module.check = false;
+                  nixpkgs.buildUsing = mkOptionDefault inputs.nixpkgs;
+                };
               }
             ];
           };
@@ -60,6 +63,7 @@ in {
                       if isPath data
                       then import data
                       else data;
+                    nixpkgs.buildUsing = mkOptionDefault bootstrapNixpkgs;
                     nixpkgs.overlays = [
                       (final: prev:
                         import ../pkgs {

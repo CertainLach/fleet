@@ -47,9 +47,6 @@ An NixOS cluster deployment tool.
 
       # Single flake may contain multiple fleet configurations, default one is called... `default`
       fleetConfigurations.default = {
-        # nixpkgs used to build the systems
-        nixpkgs.buildUsing = inputs.nixpkgs;
-
         # nixos option section of fleet config declares module, which is used for all configured nixos hosts.
         nixos = {
           imports = [inputs.lanzaboote.nixosModules.lanzaboote];
