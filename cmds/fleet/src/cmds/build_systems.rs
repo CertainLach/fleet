@@ -35,17 +35,17 @@ enum DeployAction {
 impl DeployAction {
 	pub(crate) fn name(&self) -> Option<&'static str> {
 		match self {
-			DeployAction::Upload => None,
-			DeployAction::Test => Some("test"),
-			DeployAction::Boot => Some("boot"),
-			DeployAction::Switch => Some("switch"),
+			Self::Upload => None,
+			Self::Test => Some("test"),
+			Self::Boot => Some("boot"),
+			Self::Switch => Some("switch"),
 		}
 	}
 	pub(crate) fn should_switch_profile(&self) -> bool {
 		matches!(self, Self::Switch | Self::Boot)
 	}
 	pub(crate) fn should_activate(&self) -> bool {
-		matches!(self, Self::Switch | Self::Test)
+		matches!(self, Self::Switch | Self::Test | Self::Boot)
 	}
 	pub(crate) fn should_create_rollback_marker(&self) -> bool {
 		// Upload does nothing on the target machine, other than uploading the closure.
