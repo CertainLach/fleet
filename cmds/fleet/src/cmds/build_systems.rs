@@ -175,12 +175,15 @@ async fn deploy_task(
 	}
 
 	if action.should_switch_profile() && !failed {
-		info!("switching generation");
-		let mut cmd = host.cmd("nix-env").await?;
-		cmd.comparg("--profile", "/nix/var/nix/profiles/system")
-			.comparg("--set", &built);
-		if let Err(e) = cmd.sudo().run().await {
-			error!("failed to switch generation: {e}");
+		info!("switching system profile generation");
+		// It would also be possible to update profile atomically during copy:
+		// https://github.com/NixOS/nix/pull/11657
+		let mut cmd = host.cmd("nix").await?;
+		cmd.arg("build");
+		cmd.comparg("--profile", "/nix/var/nix/profiles/system");
+		cmd.arg(&built);
+		if let Err(e) = cmd.sudo().run_nix().await {
+			error!("failed to switch system profile generation: {e}");
 			failed = true;
 		}
 	}
