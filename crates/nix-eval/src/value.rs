@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt, path::PathBuf, sync::Arc};
 use better_command::NixHandler;
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{macros::NixExprBuilder, nix_go, Error, NixSession, Result};
+use crate::{macros::NixExprBuilder, nix_go, Error, NixBuildBatch, NixSession, Result};
 
 #[derive(Clone)]
 pub enum Index {
@@ -230,6 +230,16 @@ impl Value {
 		let import = Self::new(self.0.session.clone(), "import").await?;
 		Ok(nix_go!(self | import))
 	}
+	pub async fn build_maybe_batch(
+		&self,
+		batch: Option<NixBuildBatch>,
+	) -> Result<HashMap<String, PathBuf>> {
+		if let Some(batch) = batch {
+			batch.submit(self.clone()).await
+		} else {
+			self.build().await
+		}
+	}
 	pub async fn build(&self) -> Result<HashMap<String, PathBuf>> {
 		let id = self.0.value.expect("can't use build on not-value");
 		let query = format!(":b sess_field_{id}");
@@ -261,6 +271,20 @@ impl Value {
 			.map(|(a, b)| (a.trim_start().to_owned(), PathBuf::from(b)))
 			.collect();
 		Ok(outputs)
+	}
+	/// Weakly convert string-like types (derivation/path/string) to string
+	pub async fn to_string_weak(&self) -> Result<String> {
+		let id = self.0.value.expect("can't use build on not-value");
+		let query = format!("\"${{sess_field_{id}}}\"");
+		let vid: String = self
+			.0
+			.session
+			.0
+			.lock()
+			.await
+			.execute_expression_to_json(&query)
+			.await?;
+		Ok(vid)
 	}
 
 	fn attribute(&self) -> String {

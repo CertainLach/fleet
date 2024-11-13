@@ -1,0 +1,7 @@
+[package]
+name = "nix-native-eval"
+edition = "2021"
+version.workspace = true
+
+[dependencies]
+nixrs = { git = "https://github.com/Anillc/nixrs", version = "0.1.0" }

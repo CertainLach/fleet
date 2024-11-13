@@ -14,7 +14,7 @@ use tokio::{
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tracing::{debug, error, warn, Level};
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum Error {
 	#[error("failed to create nix repl session: {0}")]
 	SessionInit(&'static str),
@@ -33,15 +33,15 @@ pub enum Error {
 	BuildFailed { attribute: String, error: String },
 
 	#[error("output: {0}")]
-	Json(#[from] serde_json::Error),
+	Json(Arc<serde_json::Error>),
 	// int outputs are too specific, and should not be used,
 	// thus error is ok to be not informative.
 	#[error("int output: {0}")]
 	Int(ParseIntError),
 	#[error("pool: {0}")]
-	Pool(#[from] r2d2::Error),
+	Pool(Arc<r2d2::Error>),
 	#[error("io: {0}")]
-	Io(#[from] std::io::Error),
+	Io(Arc<std::io::Error>),
 
 	// TODO: Should be done by wrapper/in different type.
 	#[error("at {0}: {1}")]
@@ -49,6 +49,21 @@ pub enum Error {
 
 	#[error("error: {0}")]
 	NixError(String),
+}
+impl From<r2d2::Error> for Error {
+	fn from(value: r2d2::Error) -> Self {
+		Self::Pool(Arc::new(value))
+	}
+}
+impl From<std::io::Error> for Error {
+	fn from(value: std::io::Error) -> Self {
+		Self::Io(Arc::new(value))
+	}
+}
+impl From<serde_json::Error> for Error {
+	fn from(value: serde_json::Error) -> Self {
+		Self::Json(Arc::new(value))
+	}
 }
 impl Error {
 	pub(crate) fn context(self, context: String) -> Self {

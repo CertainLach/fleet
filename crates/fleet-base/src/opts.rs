@@ -173,9 +173,9 @@ impl FleetOpts {
 		let directory = current_dir()?;
 
 		let pool = NixSessionPool::new(directory.as_os_str().to_owned(), nix_args.clone()).await?;
-		let root_field = pool.get().await?;
+		let nix_session = pool.get().await?;
 
-		let builtins_field = Value::binding(root_field.clone(), "builtins").await?;
+		let builtins_field = Value::binding(nix_session.clone(), "builtins").await?;
 		let local_system = if self.local_system == "detect" {
 			nix_go_json!(builtins_field.currentSystem)
 		} else {
@@ -187,7 +187,7 @@ impl FleetOpts {
 		let bytes = std::fs::read_to_string(fleet_data_path)?;
 		let data: Mutex<FleetData> = nixlike::parse_str(&bytes)?;
 
-		let fleet_root = Value::binding(root_field, "fleetConfigurations").await?;
+		let fleet_root = Value::binding(nix_session.clone(), "fleetConfigurations").await?;
 		let fleet_field = nix_go!(fleet_root.default({ data }));
 
 		let config_field = nix_go!(fleet_field.config);
@@ -200,10 +200,11 @@ impl FleetOpts {
 
 		let default_pkgs = nix_go!(nixpkgs(Obj {
 			overlays,
-			system: { local_system.clone() },
+			system: local_system.clone(),
 		}));
 
 		Ok(Config(Arc::new(FleetConfigInternals {
+			nix_session,
 			directory,
 			data,
 			local_system,

@@ -7,10 +7,65 @@ pub struct NixExprBuilder {
 	pub(crate) out: String,
 	used_fields: Vec<Value>,
 }
+trait AttrSetValue {
+	fn to_builder(self) -> NixExprBuilder;
+}
+trait Primitive {}
+
+macro_rules! impl_primitive {
+	($($t:ty),+) => {
+			$(
+				impl Primitive for $t {}
+			)+
+	};
+}
+impl_primitive!(String, bool, &'static str);
+
+impl<T> AttrSetValue for T
+where
+	// Limited by Primitive trait to avoid orphan rules violation with Vec<T: AttrSetValue>
+	T: Serialize + Primitive,
+{
+	fn to_builder(self) -> NixExprBuilder {
+		let serialized = nixlike::serialize(self).expect("invalid value for apply");
+		NixExprBuilder {
+			out: serialized.trim_end().to_owned(),
+			used_fields: Vec::new(),
+		}
+	}
+}
+impl AttrSetValue for Value {
+	fn to_builder(self) -> NixExprBuilder {
+		NixExprBuilder {
+			out: format!("sess_field_{}", self.session_field_id()),
+			used_fields: vec![self],
+		}
+	}
+}
+impl<T> AttrSetValue for Vec<T>
+where
+	T: AttrSetValue,
+{
+	fn to_builder(self) -> NixExprBuilder {
+		let mut builder = NixExprBuilder::list();
+		for v in self {
+			builder.list_value(NixExprBuilder::attrset_value(v));
+		}
+		builder.list_end();
+		builder
+	}
+}
+
 impl NixExprBuilder {
 	pub fn object() -> Self {
 		NixExprBuilder {
 			out: "{ ".to_owned(),
+			used_fields: Vec::new(),
+		}
+	}
+	pub fn list() -> Self {
+		NixExprBuilder {
+			out: "[".to_owned(),
 			used_fields: Vec::new(),
 		}
 	}
@@ -22,6 +77,9 @@ impl NixExprBuilder {
 				.to_owned(),
 			used_fields: Vec::new(),
 		}
+	}
+	pub fn attrset_value(v: impl AttrSetValue) -> Self {
+		v.to_builder()
 	}
 	pub fn serialized(v: impl Serialize) -> Self {
 		let serialized = nixlike::serialize(v).expect("invalid value for apply");
@@ -45,6 +103,13 @@ impl NixExprBuilder {
 		self.out.push_str(r#"}" = "#);
 		self.extend(value);
 		self.out.push_str("; ");
+	}
+	pub fn list_value(&mut self, value: Self) {
+		self.extend(value);
+		self.out.push(' ');
+	}
+	pub fn list_end(&mut self) {
+		self.out.push(']');
 	}
 
 	pub fn extend(&mut self, e: Self) {
@@ -80,19 +145,19 @@ impl NixExprBuilder {
 #[macro_export]
 macro_rules! nix_expr_inner {
 	//(@munch_object FIXME: value should be arbitrary nix_expr_inner input... Time to write proc-macro?
-	(@obj($o:ident) $field:ident, $($tt:tt)*) => {{
+	(@obj($o:ident) $field:ident$(, $($tt:tt)*)?) => {{
 		$o.obj_key(
 			NixExprBuilder::string(stringify!($field)),
-			NixExprBuilder::value($field),
+			NixExprBuilder::attrset_value($field),
 		);
-		nix_expr_inner!(@obj($o) $($tt)*);
+		$(nix_expr_inner!(@obj($o) $($tt)*);)?
 	}};
-	(@obj($o:ident) $field:ident: $v:block, $($tt:tt)*) => {{
+	(@obj($o:ident) $field:ident: $v:expr$(, $($tt:tt)*)?) => {{
 		$o.obj_key(
 			NixExprBuilder::string(stringify!($field)),
-			NixExprBuilder::serialized(&$v),
+			NixExprBuilder::attrset_value($v),
 		);
-		nix_expr_inner!(@obj($o) $($tt)*);
+		$(nix_expr_inner!(@obj($o) $($tt)*);)?
 	}};
 	(@obj($o:ident)) => {{}};
 	(Obj { $($tt:tt)* }) => {{

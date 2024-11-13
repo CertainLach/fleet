@@ -14,9 +14,9 @@ r2d2 = "0.8.10"
 regex = "1.10.6"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-thiserror = "1.0.61"
+thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "io-util"] }
-tokio-util = { version = "0.7.11", features = ["codec"] }
+tokio-util.workspace = true
 tracing.workspace = true
 unindent = "0.2.3"
 

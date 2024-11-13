@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use fleet_shared::SecretData;
-use nix_eval::{nix_go, nix_go_json, util::assert_warn, Value};
+use nix_eval::{nix_go, nix_go_json, util::assert_warn, NixSession, Value};
 use openssh::SessionBuilder;
 use serde::de::DeserializeOwned;
 use tempfile::NamedTempFile;
@@ -33,6 +33,8 @@ pub struct FleetConfigInternals {
 
 	/// import nixpkgs {system = local};
 	pub default_pkgs: Value,
+
+	pub nix_session: NixSession,
 }
 
 // TODO: Make field not pub

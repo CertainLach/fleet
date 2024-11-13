@@ -7,7 +7,7 @@ use fleet_base::{
 	opts::FleetOpts,
 };
 use itertools::Itertools as _;
-use nix_eval::nix_go;
+use nix_eval::{nix_go, NixBuildBatch};
 use tokio::{task::LocalSet, time::sleep};
 use tracing::{error, field, info, info_span, warn, Instrument};
 
@@ -251,18 +251,18 @@ async fn deploy_task(
 	Ok(())
 }
 
-async fn build_task(config: Config, host: String, build_attr: &str) -> Result<PathBuf> {
+async fn build_task(
+	config: Config,
+	host: String,
+	build_attr: &str,
+	batch: Option<NixBuildBatch>,
+) -> Result<PathBuf> {
 	info!("building");
 	let host = config.host(&host).await?;
 	// let action = Action::from(self.subcommand.clone());
 	let nixos = host.nixos_config().await?;
 	let drv = nix_go!(nixos.system.build[{ build_attr }]);
-	let outputs = drv.build().await.inspect_err(|_| {
-			if build_attr == "sdImage" {
-				info!("sd-image build failed");
-				info!("Make sure you have imported modulesPath/installer/sd-card/sd-image-<arch>[-installer].nix (For installer, you may want to check config)");
-			}
-		})?;
+	let outputs = drv.build_maybe_batch(batch).await?;
 	let out_output = outputs
 		.get("out")
 		.ok_or_else(|| anyhow!("system build should produce \"out\" output"))?;
@@ -296,7 +296,8 @@ impl BuildSystems {
 			// multiple hosts.
 			set.spawn_local(
 				(async move {
-					let built = match build_task(config, hostname.clone(), &build_attr).await {
+					let built = match build_task(config, hostname.clone(), &build_attr, None).await
+					{
 						Ok(path) => path,
 						Err(e) => {
 							error!("failed to deploy host: {}", e);
@@ -324,6 +325,7 @@ impl Deploy {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		let hosts = config.list_hosts().await?;
 		let set = LocalSet::new();
+		let batch = Some(config.nix_session.new_build_batch(format!("deploy-hosts")));
 		for host in hosts.into_iter() {
 			if opts.should_skip(&host).await? {
 				continue;
@@ -333,17 +335,19 @@ impl Deploy {
 			let hostname = host.name.clone();
 			let local_host = config.local_host();
 			let opts = opts.clone();
+			let batch = batch.clone();
 			// FIXME: Fix repl concurrency (see build-systems)
 			set.spawn_local(
 				(async move {
-					let built = match build_task(config.clone(), hostname.clone(), "toplevel").await
-					{
-						Ok(path) => path,
-						Err(e) => {
-							error!("failed to deploy host: {}", e);
-							return;
-						}
-					};
+					let built =
+						match build_task(config.clone(), hostname.clone(), "toplevel", batch).await
+						{
+							Ok(path) => path,
+							Err(e) => {
+								error!("failed to deploy host: {}", e);
+								return;
+							}
+						};
 					if !opts.is_local(&hostname) {
 						info!("uploading system closure");
 						{
@@ -405,6 +409,7 @@ impl Deploy {
 				.instrument(span),
 			);
 		}
+		drop(batch);
 		set.await;
 		Ok(())
 	}

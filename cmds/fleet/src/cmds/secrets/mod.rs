@@ -231,9 +231,7 @@ async fn generate_impure(
 		let key = config.key(owner).await?;
 		recipients.push(key);
 	}
-	let generators = nix_go!(mk_secret_generators(Obj {
-		recipients: { recipients },
-	}));
+	let generators = nix_go!(mk_secret_generators(Obj { recipients }));
 
 	let generator = nix_go!(call_package(generator)(generators));
 
@@ -316,7 +314,7 @@ async fn generate(
 	// I don't want to make modules always responsible for additional secret data anyway,
 	// so it should be in derivation, and not in the secret data itself.
 	let generators = nix_go!(default_mk_secret_generators(Obj {
-		recipients: { <Vec<String>>::new() },
+		recipients: <Vec<String>>::new(),
 	}));
 	let default_generator = nix_go!(default_call_package(generator)(generators));
 
