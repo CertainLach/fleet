@@ -91,6 +91,16 @@ pub struct FleetOpts {
 }
 
 impl FleetOpts {
+	pub async fn filter_skipped(&self, hosts: impl IntoIterator<Item = ConfigHost>) -> Result<Vec<ConfigHost>> {
+		let mut out = Vec::new();	
+		for host in hosts {
+			if self.should_skip(&host).await? {
+				continue;
+			}
+			out.push(host);
+		}
+		Ok(out)
+	}
 	pub async fn should_skip(&self, host: &ConfigHost) -> Result<bool> {
 		if self.skip.iter().any(|h| h as &str == host.name) {
 			return Ok(true);

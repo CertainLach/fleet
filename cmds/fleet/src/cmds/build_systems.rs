@@ -272,31 +272,23 @@ async fn build_task(
 
 impl BuildSystems {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
-		let hosts = config.list_hosts().await?;
+		let hosts = opts.filter_skipped(config.list_hosts().await?).await?;
 		let set = LocalSet::new();
 		let build_attr = self.build_attr.clone();
-		for host in hosts.into_iter() {
-			if opts.should_skip(&host).await? {
-				continue;
-			}
+		let batch = (hosts.len() > 1).then(|| {
+			config
+				.nix_session
+				.new_build_batch("build-hosts".to_string())
+		});
+		for host in hosts {
 			let config = config.clone();
 			let span = info_span!("build", host = field::display(&host.name));
 			let hostname = host.name;
 			let build_attr = build_attr.clone();
-			// FIXME: Since the introduction of better-nix-eval,
-			// due to single repl used for builds, hosts are waiting for each other to build,
-			// instead of building concurrently.
-			//
-			// Open multiple repls?
-			//
-			// Create build batcher, which will behave similar to golangs
-			// WaitGroup, and start executing once all the build tasks are scheduled?
-			// This also allows to cleanup build output, as there will be no longer
-			// "waiting for remote machine" messages in the cases when one package is needed for
-			// multiple hosts.
+			let batch = batch.clone();
 			set.spawn_local(
 				(async move {
-					let built = match build_task(config, hostname.clone(), &build_attr, None).await
+					let built = match build_task(config, hostname.clone(), &build_attr, batch).await
 					{
 						Ok(path) => path,
 						Err(e) => {
@@ -316,6 +308,7 @@ impl BuildSystems {
 				.instrument(span),
 			);
 		}
+		drop(batch);
 		set.await;
 		Ok(())
 	}
@@ -323,20 +316,21 @@ impl BuildSystems {
 
 impl Deploy {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
-		let hosts = config.list_hosts().await?;
+		let hosts = opts.filter_skipped(config.list_hosts().await?).await?;
 		let set = LocalSet::new();
-		let batch = Some(config.nix_session.new_build_batch(format!("deploy-hosts")));
+		let batch = (hosts.len() > 1).then(|| {
+			config
+				.nix_session
+				.new_build_batch("deploy-hosts".to_string())
+		});
 		for host in hosts.into_iter() {
-			if opts.should_skip(&host).await? {
-				continue;
-			}
 			let config = config.clone();
 			let span = info_span!("deploy", host = field::display(&host.name));
 			let hostname = host.name.clone();
 			let local_host = config.local_host();
 			let opts = opts.clone();
 			let batch = batch.clone();
-			// FIXME: Fix repl concurrency (see build-systems)
+
 			set.spawn_local(
 				(async move {
 					let built =

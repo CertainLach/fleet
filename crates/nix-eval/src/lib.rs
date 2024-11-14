@@ -9,11 +9,8 @@ pub use pool::NixSessionPool;
 use pool::NixSessionPoolInner;
 use r2d2::PooledConnection;
 pub use session::{Error, Result};
-use tokio::{
-	sync::{mpsc, oneshot},
-	task::AbortHandle,
-};
-use tracing::{info, instrument, Instrument};
+use tokio::sync::{mpsc, oneshot};
+use tracing::instrument;
 pub use value::{Index, Value};
 
 mod pool;
