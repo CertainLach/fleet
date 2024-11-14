@@ -13,7 +13,7 @@ use fleet_base::{
 	opts::FleetOpts,
 };
 use fleet_shared::SecretData;
-use nix_eval::{nix_go, nix_go_json, Value};
+use nix_eval::{nix_go, nix_go_json, NixBuildBatch, Value};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use tabled::{Table, Tabled};
@@ -129,7 +129,7 @@ pub enum Secret {
 	},
 }
 
-#[tracing::instrument(skip(config, secret, field, prefer_identities))]
+#[tracing::instrument(skip(config, secret, field, prefer_identities, batch))]
 async fn update_owner_set(
 	secret_name: &str,
 	config: &Config,
@@ -137,6 +137,7 @@ async fn update_owner_set(
 	field: Value,
 	updated_set: &[String],
 	prefer_identities: &[String],
+	batch: Option<NixBuildBatch>,
 ) -> Result<FleetSharedSecret> {
 	let original_set = secret.owners.clone();
 
@@ -160,9 +161,10 @@ async fn update_owner_set(
 
 	if should_regenerate {
 		info!("secret is owner-dependent, will regenerate");
-		let generated = generate_shared(config, secret_name, field, updated_set.to_vec()).await?;
+		let generated = generate_shared(config, secret_name, field, updated_set.to_vec(), batch).await?;
 		Ok(generated)
 	} else {
+		drop(batch);
 		let identity_holder = if !prefer_identities.is_empty() {
 			prefer_identities
 				.iter()
@@ -213,6 +215,7 @@ async fn generate_impure(
 	secret: Value,
 	default_generator: Value,
 	owners: &[String],
+	batch: Option<NixBuildBatch>,
 ) -> Result<FleetSecret> {
 	let generator = nix_go!(secret.generator);
 	let on: Option<String> = nix_go_json!(default_generator.impureOn);
@@ -235,7 +238,7 @@ async fn generate_impure(
 
 	let generator = nix_go!(call_package(generator)(generators));
 
-	let generator = generator.build().await?;
+	let generator = generator.build_maybe_batch(batch).await?;
 	let generator = generator
 		.get("out")
 		.ok_or_else(|| anyhow!("missing generateImpure out"))?;
@@ -290,6 +293,7 @@ async fn generate(
 	display_name: &str,
 	secret: Value,
 	owners: &[String],
+	batch: Option<NixBuildBatch>,
 ) -> Result<FleetSecret> {
 	let generator = nix_go!(secret.generator);
 	// Can't properly check on nix module system level
@@ -322,7 +326,15 @@ async fn generate(
 
 	match kind {
 		GeneratorKind::Impure => {
-			generate_impure(config, display_name, secret, default_generator, owners).await
+			generate_impure(
+				config,
+				display_name,
+				secret,
+				default_generator,
+				owners,
+				batch,
+			)
+			.await
 		}
 		GeneratorKind::Pure => {
 			generate_pure(config, display_name, secret, default_generator, owners).await
@@ -334,10 +346,11 @@ async fn generate_shared(
 	display_name: &str,
 	secret: Value,
 	expected_owners: Vec<String>,
+	batch: Option<NixBuildBatch>,
 ) -> Result<FleetSharedSecret> {
 	// let owners: Vec<String> = nix_go_json!(secret.expectedOwners);
 	Ok(FleetSharedSecret {
-		secret: generate(config, display_name, secret, &expected_owners).await?,
+		secret: generate(config, display_name, secret, &expected_owners, batch).await?,
 		owners: expected_owners,
 	})
 }
@@ -603,6 +616,7 @@ impl Secret {
 					field,
 					&target_machines,
 					&prefer_identities,
+					None,
 				)
 				.await?;
 				config.replace_shared(name, updated);
@@ -610,6 +624,7 @@ impl Secret {
 			Secret::Regenerate { prefer_identities } => {
 				info!("checking for secrets to regenerate");
 				{
+					let shared_batch = None;
 					let _span = info_span!("shared").entered();
 					let expected_shared_set = config
 						.list_configured_shared()
@@ -627,12 +642,19 @@ impl Secret {
 							continue;
 						};
 						info!("generating secret: {missing}");
-						let shared = generate_shared(config, missing, secret, expected_owners)
-							.in_current_span()
-							.await?;
+						let shared = generate_shared(
+							config,
+							missing,
+							secret,
+							expected_owners,
+							shared_batch.clone(),
+						)
+						.in_current_span()
+						.await?;
 						config.replace_shared(missing.to_string(), shared)
 					}
 				}
+				let hosts_batch = None;
 				for host in config.list_hosts().await? {
 					if opts.should_skip(&host).await? {
 						continue;
@@ -652,17 +674,22 @@ impl Secret {
 					for missing in expected_set.difference(&stored_set) {
 						info!("generating secret: {missing}");
 						let secret = host.secret_field(missing).in_current_span().await?;
-						let generated =
-							match generate(config, missing, secret, &[host.name.clone()])
-								.in_current_span()
-								.await
-							{
-								Ok(v) => v,
-								Err(e) => {
-									error!("{e:?}");
-									continue;
-								}
-							};
+						let generated = match generate(
+							config,
+							missing,
+							secret,
+							&[host.name.clone()],
+							hosts_batch.clone(),
+						)
+						.in_current_span()
+						.await
+						{
+							Ok(v) => v,
+							Err(e) => {
+								error!("{e:?}");
+								continue;
+							}
+						};
 						config.insert_secret(&host.name, missing.to_string(), generated)
 					}
 				}
@@ -689,6 +716,7 @@ impl Secret {
 							secret,
 							&expected_owners,
 							&prefer_identities,
+							None,
 						)
 						.await?,
 					);
