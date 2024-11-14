@@ -4,4 +4,5 @@ edition = "2021"
 version.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 nixrs = { git = "https://github.com/Anillc/nixrs", version = "0.1.0" }

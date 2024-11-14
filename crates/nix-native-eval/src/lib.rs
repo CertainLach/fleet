@@ -1,7 +1,11 @@
+use anyhow::Result;
 use nixrs::{State, Store};
 
-fn init() {
-	nixrs::init();
+pub fn init() -> Result<()> {
+	nixrs::init()?;
 	let store = Store::new("daemon")?;
-	let state = State::new(store)
+	let state = State::new(store)?;
+	let _ = state;
+
+	Ok(())
 }
