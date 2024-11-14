@@ -129,7 +129,7 @@ impl MyCommand {
 		}
 		out
 	}
-	fn into_command(self) -> Command {
+	fn into_command_unchecked_local(self) -> Command {
 		let mut out = Command::new(self.command);
 		out.args(self.args);
 		for (k, v) in self.env {
@@ -137,15 +137,15 @@ impl MyCommand {
 		}
 		out
 	}
-	fn into_command_new(self) -> Result<Either<Command, openssh::OwningCommand<Arc<Session>>>> {
+	fn into_command(self) -> Result<Either<Command, openssh::OwningCommand<Arc<Session>>>> {
 		Ok(if let Some(session) = self.ssh_session.clone() {
-			let cmd = self.translate_env_into_env().into_command();
+			let cmd = self.translate_env_into_env().into_command_unchecked_local();
 			Either::Right(
 				cmd.over_ssh(session)
 					.map_err(|e| anyhow!("ssh error: {e}"))?,
 			)
 		} else {
-			let cmd = self.into_command();
+			let cmd = self.into_command_unchecked_local();
 			Either::Left(cmd)
 		})
 	}
@@ -219,7 +219,7 @@ impl MyCommand {
 
 	pub async fn run(self) -> Result<()> {
 		let str = self.clone().into_string();
-		let cmd = self.wrap_sudo_if_needed().into_command_new()?;
+		let cmd = self.wrap_sudo_if_needed().into_command()?;
 		match cmd {
 			Either::Left(cmd) => run_nix_inner(str, cmd, &mut PlainHandler).await?,
 			Either::Right(cmd) => run_nix_inner_ssh(str, cmd, &mut PlainHandler).await?,
@@ -232,7 +232,7 @@ impl MyCommand {
 	}
 	pub async fn run_bytes(self) -> Result<Vec<u8>> {
 		let str = self.clone().into_string();
-		let cmd = self.wrap_sudo_if_needed().into_command_new()?;
+		let cmd = self.wrap_sudo_if_needed().into_command()?;
 		let v = match cmd {
 			Either::Left(cmd) => run_nix_inner_stdout(str, cmd, &mut PlainHandler).await?,
 			Either::Right(cmd) => run_nix_inner_stdout_ssh(str, cmd, &mut PlainHandler).await?,
@@ -243,16 +243,29 @@ impl MyCommand {
 	pub async fn run_nix_string(mut self) -> Result<String> {
 		let str = self.clone().into_string();
 		self.arg("--log-format").arg("internal-json");
-		let cmd = self.wrap_sudo_if_needed().into_command();
-		let bytes = run_nix_inner_stdout(str, cmd, &mut NixHandler::default()).await?;
+		let cmd = self.wrap_sudo_if_needed().into_command()?;
+		let bytes = match cmd {
+			Either::Left(cmd) => run_nix_inner_stdout(str, cmd, &mut NixHandler::default()).await?,
+			Either::Right(cmd) => {
+				run_nix_inner_stdout_ssh(str, cmd, &mut NixHandler::default()).await?
+			}
+		};
 		Ok(String::from_utf8(bytes)?)
 	}
 	pub async fn run_nix(mut self) -> Result<()> {
 		let str = self.clone().into_string();
 		self.arg("--log-format").arg("internal-json");
-		let mut cmd = self.wrap_sudo_if_needed().into_command();
-		cmd.stdout(Stdio::inherit());
-		run_nix_inner(str, cmd, &mut NixHandler::default()).await
+		let cmd = self.wrap_sudo_if_needed().into_command()?;
+		match cmd {
+			Either::Left(mut cmd) => {
+				cmd.stdout(Stdio::inherit());
+				run_nix_inner(str, cmd, &mut NixHandler::default()).await
+			}
+			Either::Right(mut cmd) => {
+				cmd.stdout(openssh::Stdio::inherit());
+				run_nix_inner_ssh(str, cmd, &mut NixHandler::default()).await
+			}
+		}
 	}
 }
 
