@@ -3,7 +3,7 @@
   config,
   ...
 }: let
-  inherit (lib.options) mkOption;
+  inherit (lib.options) mkOption literalExpression;
   inherit (lib.types) unspecified nullOr listOf str bool attrsOf submodule;
   inherit (lib.strings) concatStringsSep;
   inherit (lib.attrsets) mapAttrs;
@@ -30,6 +30,7 @@
       };
       regenerateOnOwnerRemoved = mkOption {
         default = config.regenerateOnOwnerAdded;
+        defaultText = literalExpression "regenerateOnOwnerAdded";
         type = bool;
         description = ''
           Should this secret be removed on owner removal, or it may be just reencrypted

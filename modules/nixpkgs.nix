@@ -4,7 +4,7 @@
   config,
   ...
 }: let
-  inherit (lib.options) mkOption;
+  inherit (lib.options) mkOption literalExpression;
   inherit (lib.types) path;
   inherit (lib.modules) mkRemovedOptionModule;
   inherit (fleetLib.options) mkHostsOption;
@@ -39,6 +39,7 @@ in {
         '';
         type = path;
         default = config.nixpkgs.buildUsing;
+        defaultText = literalExpression "config.nixpkgs.buildUsing";
       };
       # imports = [
       # 	(mkRemovedOptionModule ["nixpkgs" "overlays"] "this option needs to be specified at nixosModules level")

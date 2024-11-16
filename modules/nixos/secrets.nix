@@ -7,7 +7,7 @@
 }: let
   inherit (builtins) hashString;
   inherit (lib.stringsWithDeps) stringAfter;
-  inherit (lib.options) mkOption;
+  inherit (lib.options) mkOption literalExpression;
   inherit (lib.lists) optional;
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.modules) mkIf;
@@ -78,6 +78,7 @@
         type = str;
         description = "Group of the secret";
         default = sysConfig.users.users.${config.owner}.group;
+        defaultText = literalExpression "config.users.users.$${owner}.group";
       };
     };
   });
