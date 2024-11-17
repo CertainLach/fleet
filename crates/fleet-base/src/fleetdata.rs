@@ -73,12 +73,11 @@ pub struct FleetSharedSecret {
 
 /// Returns None if recipients.is_empty()
 pub fn encrypt_secret_data<'a>(
-	recipients: impl IntoIterator<Item = &'a (impl Recipient + 'a)>,
+	recipients: impl IntoIterator<Item = &'a dyn Recipient>,
 	data: Vec<u8>,
 ) -> Option<SecretData> {
 	let mut encrypted = vec![];
-	let recipients = recipients.into_iter().map(|v| v as &dyn Recipient);
-	let mut encryptor = age::Encryptor::with_recipients(recipients)
+	let mut encryptor = age::Encryptor::with_recipients(recipients.into_iter())
 		.ok()?
 		.wrap_output(&mut encrypted)
 		.expect("in memory write");

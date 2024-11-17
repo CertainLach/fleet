@@ -4,6 +4,7 @@ use std::{
 	path::PathBuf,
 };
 
+use age::Recipient;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::Parser;
@@ -488,8 +489,9 @@ impl Secret {
 				io::stdin().read_to_end(&mut input)?;
 
 				if !input.is_empty() {
-					let encrypted = encrypt_secret_data(&recipients, input)
-						.ok_or_else(|| anyhow!("no recipients provided"))?;
+					let encrypted =
+						encrypt_secret_data(recipients.iter().map(|r| r as &dyn Recipient), input)
+							.ok_or_else(|| anyhow!("no recipients provided"))?;
 					parts.insert(part_name, FleetSecretPart { raw: encrypted });
 				}
 
@@ -537,8 +539,8 @@ impl Secret {
 
 				if let Some(secret) = parse_secret().await? {
 					let recipient = config.recipient(&machine).await?;
-					let encrypted =
-						encrypt_secret_data(&[recipient], secret).expect("recipient provided");
+					let encrypted = encrypt_secret_data([&recipient as &dyn Recipient], secret)
+						.expect("recipient provided");
 					if out
 						.parts
 						.insert(part_name.clone(), FleetSecretPart { raw: encrypted })
