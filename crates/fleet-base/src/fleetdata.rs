@@ -73,7 +73,7 @@ pub struct FleetSharedSecret {
 
 /// Returns None if recipients.is_empty()
 pub fn encrypt_secret_data<'a>(
-	recipients: impl IntoIterator<Item = &'a (impl Recipient + Send + 'static)>,
+	recipients: impl IntoIterator<Item = &'a (impl Recipient + 'a)>,
 	data: Vec<u8>,
 ) -> Option<SecretData> {
 	let mut encrypted = vec![];
