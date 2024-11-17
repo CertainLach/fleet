@@ -68,10 +68,9 @@ fn decrypt(input: &SecretData, identity: &dyn Identity) -> Result<Vec<u8>> {
 	ensure!(input.encrypted, "passed data is not encrypted!");
 	let mut input = Cursor::new(&input.data);
 	let decryptor = Decryptor::new(&mut input).context("failed to init decryptor")?;
-	let decryptor = match decryptor {
-		Decryptor::Recipients(r) => r,
-		Decryptor::Passphrase(_) => bail!("should be recipients"),
-	};
+	if decryptor.is_scrypt() {
+		bail!("should be recipients");
+	}
 	let mut decryptor = decryptor
 		.decrypt(iter::once(identity as &dyn age::Identity))
 		.context("failed to decrypt, wrong key?")?;
@@ -89,10 +88,7 @@ fn encrypt(input: &[u8], targets: Vec<String>) -> Result<SecretData> {
 			SshRecipient::from_str(&t).map_err(|e| anyhow!("failed to parse recipient: {e:?}"))
 		})
 		.collect::<Result<Vec<SshRecipient>>>()?;
-	let recipients = recipients
-		.into_iter()
-		.map(|v| Box::new(v) as Box<dyn Recipient + Send>)
-		.collect::<Vec<_>>();
+	let recipients = recipients.iter().map(|v| v as &dyn Recipient);
 	let mut encrypted = vec![];
 	let mut encryptor = Encryptor::with_recipients(recipients)
 		.expect("recipients provided")

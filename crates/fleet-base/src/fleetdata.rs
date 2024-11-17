@@ -6,7 +6,6 @@ use std::{
 use age::Recipient;
 use chrono::{DateTime, Utc};
 use fleet_shared::SecretData;
-use itertools::Itertools;
 use serde::{de::Error, Deserialize, Serialize};
 use serde_json::Value;
 
@@ -73,16 +72,14 @@ pub struct FleetSharedSecret {
 }
 
 /// Returns None if recipients.is_empty()
-pub fn encrypt_secret_data(
-	recipients: impl IntoIterator<Item = impl Recipient + Send + 'static>,
+pub fn encrypt_secret_data<'a>(
+	recipients: impl IntoIterator<Item = &'a (impl Recipient + Send + 'static)>,
 	data: Vec<u8>,
 ) -> Option<SecretData> {
 	let mut encrypted = vec![];
-	let recipients = recipients
-		.into_iter()
-		.map(|v| Box::new(v) as Box<dyn Recipient + Send>)
-		.collect_vec();
-	let mut encryptor = age::Encryptor::with_recipients(recipients)?
+	let recipients = recipients.into_iter().map(|v| v as &dyn Recipient);
+	let mut encryptor = age::Encryptor::with_recipients(recipients)
+		.ok()?
 		.wrap_output(&mut encrypted)
 		.expect("in memory write");
 	io::copy(&mut Cursor::new(data), &mut encryptor).expect("in memory copy");

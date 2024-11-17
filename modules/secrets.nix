@@ -1,4 +1,8 @@
-{lib, config, ...}: let
+{
+  lib,
+  config,
+  ...
+}: let
   inherit (lib.options) mkOption;
   inherit (lib.types) unspecified nullOr listOf str bool attrsOf submodule;
   inherit (lib.strings) concatStringsSep;
@@ -51,9 +55,11 @@ in {
     };
   };
   config = {
-    hosts = mapAttrs (_: secretMap: {
-      nixos.secrets = mapAttrs (_: s: removeAttrs s ["createdAt" "expiresAt"]) secretMap;
-    }) config.data.hostSecrets;
+    hosts =
+      mapAttrs (_: secretMap: {
+        nixos.secrets = mapAttrs (_: s: removeAttrs s ["createdAt" "expiresAt"]) secretMap;
+      })
+      config.data.hostSecrets;
     nixpkgs.overlays = [
       (final: prev: {
         mkSecretGenerators = {recipients}: rec {

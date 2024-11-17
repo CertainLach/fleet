@@ -161,7 +161,8 @@ async fn update_owner_set(
 
 	if should_regenerate {
 		info!("secret is owner-dependent, will regenerate");
-		let generated = generate_shared(config, secret_name, field, updated_set.to_vec(), batch).await?;
+		let generated =
+			generate_shared(config, secret_name, field, updated_set.to_vec(), batch).await?;
 		Ok(generated)
 	} else {
 		drop(batch);
@@ -487,7 +488,7 @@ impl Secret {
 				io::stdin().read_to_end(&mut input)?;
 
 				if !input.is_empty() {
-					let encrypted = encrypt_secret_data(recipients, input)
+					let encrypted = encrypt_secret_data(&recipients, input)
 						.ok_or_else(|| anyhow!("no recipients provided"))?;
 					parts.insert(part_name, FleetSecretPart { raw: encrypted });
 				}
@@ -537,7 +538,7 @@ impl Secret {
 				if let Some(secret) = parse_secret().await? {
 					let recipient = config.recipient(&machine).await?;
 					let encrypted =
-						encrypt_secret_data(vec![recipient], secret).expect("recipient provided");
+						encrypt_secret_data(&[recipient], secret).expect("recipient provided");
 					if out
 						.parts
 						.insert(part_name.clone(), FleetSecretPart { raw: encrypted })

@@ -89,15 +89,10 @@ fn load_identities() -> Result<Identities> {
 		.map_err(|e| anyhow!("parse recipients: {e:?}"))
 }
 fn make_encryptor(r: &Identities) -> Result<Encryptor> {
-	Ok(Encryptor::with_recipients(
-		r.iter()
-			.map(|v| {
-				let coerced: Box<dyn Recipient + Send> = Box::new(v.clone());
-				coerced
-			})
-			.collect(),
+	Ok(
+		Encryptor::with_recipients(r.iter().map(|v| v as &dyn Recipient))
+			.expect("list is not empty"),
 	)
-	.expect("list is not empty"))
 }
 fn wrap_encoder<'t>(w: impl Write + 't, encoding: OutputEncoding) -> impl Write + 't {
 	fn coerce<'t>(w: impl Write + 't) -> Box<dyn Write + 't> {
