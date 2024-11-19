@@ -6,6 +6,10 @@ use std::{
 use age::Recipient;
 use chrono::{DateTime, Utc};
 use fleet_shared::SecretData;
+use rand::{
+	distributions::{Alphanumeric, DistString},
+	thread_rng,
+};
 use serde::{de::Error, Deserialize, Serialize};
 use serde_json::Value;
 
@@ -42,10 +46,17 @@ impl<'de> Deserialize<'de> for FleetDataVersion {
 	}
 }
 
+fn generate_gc_prefix() -> String {
+	let id = Alphanumeric.sample_string(&mut thread_rng(), 8);
+	format!("fleet-gc-{id}")
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FleetData {
 	pub version: FleetDataVersion,
+	#[serde(default = "generate_gc_prefix")]
+	pub gc_root_prefix: String,
 
 	#[serde(default)]
 	pub hosts: BTreeMap<String, HostData>,

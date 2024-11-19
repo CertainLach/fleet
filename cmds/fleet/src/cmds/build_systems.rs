@@ -253,12 +253,12 @@ async fn deploy_task(
 
 async fn build_task(
 	config: Config,
-	host: String,
+	hostname: String,
 	build_attr: &str,
 	batch: Option<NixBuildBatch>,
 ) -> Result<PathBuf> {
 	info!("building");
-	let host = config.host(&host).await?;
+	let host = config.host(&hostname).await?;
 	// let action = Action::from(self.subcommand.clone());
 	let nixos = host.nixos_config().await?;
 	let drv = nix_go!(nixos.system.build[{ build_attr }]);
@@ -266,6 +266,21 @@ async fn build_task(
 	let out_output = outputs
 		.get("out")
 		.ok_or_else(|| anyhow!("system build should produce \"out\" output"))?;
+
+	{
+		info!("adding gc root");
+		let mut cmd = config.local_host().cmd("nix").await?;
+		cmd.arg("build")
+			.comparg(
+				"--profile",
+				format!(
+					"/nix/var/nix/profiles/{}-{hostname}",
+					config.data().gc_root_prefix
+				),
+			)
+			.arg(out_output);
+		cmd.sudo().run_nix().await?;
+	}
 
 	Ok(out_output.clone())
 }

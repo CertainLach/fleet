@@ -16,6 +16,10 @@ in {
             type = str;
             internal = true;
           };
+          gcRootPrefix = mkOption {
+            type = str;
+            internal = true;
+          };
           hosts = mkOption {
             type = attrsOf (submodule {
               options.encryptionKey = mkOption {

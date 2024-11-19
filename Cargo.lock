@@ -962,6 +962,7 @@ dependencies = [
  "nixlike",
  "nom",
  "openssh",
+ "rand",
  "serde",
  "serde_json",
  "tempfile",
