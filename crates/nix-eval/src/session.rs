@@ -206,6 +206,8 @@ pub struct NixSessionInner {
 
 	next_id: u32,
 	pub(crate) free_list: Vec<u32>,
+
+	pub nix_system: String,
 }
 
 /// Discover inter-message repl delimiter
@@ -222,6 +224,7 @@ impl NixSessionInner {
 	pub(crate) async fn new(
 		flake: &OsStr,
 		extra_args: impl IntoIterator<Item = &OsStr>,
+		nix_system: String,
 	) -> Result<Self> {
 		let mut cmd = Command::new("nix");
 		cmd.arg("repl")
@@ -280,6 +283,8 @@ impl NixSessionInner {
 
 			next_id: 0,
 			free_list: vec![],
+
+			nix_system,
 		};
 		res.train().await?;
 		Ok(res)

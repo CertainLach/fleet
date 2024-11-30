@@ -41,8 +41,8 @@ pub struct NixBuildBatch {
 
 #[instrument(skip(session, values))]
 async fn build_multiple(name: String, session: NixSession, values: Vec<Value>) -> Result<()> {
+	let system = session.0.lock().await.nix_system.clone();
 	let builtins = Value::binding(session, "builtins").await?;
-	let system = nix_go!(builtins.currentSystem);
 	let drv = nix_go!(builtins.derivation(Obj {
 		system,
 		name,

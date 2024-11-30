@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use clap::Parser;
-use nix_eval::{nix_go, nix_go_json, util::assert_warn, NixSessionPool, Value};
+use nix_eval::{nix_go, util::assert_warn, NixSessionPool, Value};
 use nom::{
 	bytes::complete::take_while1,
 	character::complete::char,
@@ -85,14 +85,16 @@ pub struct FleetOpts {
 
 	/// Override detected system for host, to perform builds via
 	/// binfmt-declared qemu instead of trying to crosscompile
-	// TODO: Remove, as it is not used anymore.
-	#[clap(long, default_value = "detect")]
+	#[clap(long, default_value = env!("NIX_SYSTEM"))]
 	pub local_system: String,
 }
 
 impl FleetOpts {
-	pub async fn filter_skipped(&self, hosts: impl IntoIterator<Item = ConfigHost>) -> Result<Vec<ConfigHost>> {
-		let mut out = Vec::new();	
+	pub async fn filter_skipped(
+		&self,
+		hosts: impl IntoIterator<Item = ConfigHost>,
+	) -> Result<Vec<ConfigHost>> {
+		let mut out = Vec::new();
 		for host in hosts {
 			if self.should_skip(&host).await? {
 				continue;
@@ -182,15 +184,15 @@ impl FleetOpts {
 	pub async fn build(&self, nix_args: Vec<OsString>) -> Result<Config> {
 		let directory = current_dir()?;
 
-		let pool = NixSessionPool::new(directory.as_os_str().to_owned(), nix_args.clone()).await?;
+		let pool = NixSessionPool::new(
+			directory.as_os_str().to_owned(),
+			nix_args.clone(),
+			self.local_system.clone(),
+		)
+		.await?;
 		let nix_session = pool.get().await?;
 
 		let builtins_field = Value::binding(nix_session.clone(), "builtins").await?;
-		let local_system = if self.local_system == "detect" {
-			nix_go_json!(builtins_field.currentSystem)
-		} else {
-			self.local_system.clone()
-		};
 
 		let mut fleet_data_path = directory.clone();
 		fleet_data_path.push("fleet.nix");
@@ -210,14 +212,14 @@ impl FleetOpts {
 
 		let default_pkgs = nix_go!(nixpkgs(Obj {
 			overlays,
-			system: local_system.clone(),
+			system: self.local_system.clone(),
 		}));
 
 		Ok(Config(Arc::new(FleetConfigInternals {
 			nix_session,
 			directory,
 			data,
-			local_system,
+			local_system: self.local_system.clone(),
 			nix_args,
 			config_field,
 			default_pkgs,

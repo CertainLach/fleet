@@ -1,18 +1,23 @@
-use std::ffi::OsString;
-use std::sync::{Arc, OnceLock};
+use std::{
+	ffi::OsString,
+	sync::{Arc, OnceLock},
+};
 
 use r2d2::Pool;
 
-use crate::session::NixSessionInner;
-use crate::{Error, NixSession, Result};
+use crate::{session::NixSessionInner, Error, NixSession, Result};
 
 pub struct NixSessionPool(Pool<NixSessionPoolInner>);
 impl NixSessionPool {
-	pub async fn new(flake: OsString, nix_args: Vec<OsString>) -> Result<Self> {
+	pub async fn new(flake: OsString, nix_args: Vec<OsString>, nix_system: String) -> Result<Self> {
 		let inner = tokio::task::block_in_place(|| {
 			r2d2::Builder::<NixSessionPoolInner>::new()
 				.min_idle(Some(0))
-				.build(NixSessionPoolInner { flake, nix_args })
+				.build(NixSessionPoolInner {
+					flake,
+					nix_args,
+					nix_system,
+				})
 		})?;
 		Ok(Self(inner))
 	}
@@ -25,6 +30,7 @@ impl NixSessionPool {
 pub(crate) struct NixSessionPoolInner {
 	flake: OsString,
 	nix_args: Vec<OsString>,
+	pub(crate) nix_system: String,
 }
 
 impl r2d2::ManageConnection for NixSessionPoolInner {
@@ -38,6 +44,7 @@ impl r2d2::ManageConnection for NixSessionPoolInner {
 		Ok(futures::executor::block_on(NixSessionInner::new(
 			self.flake.as_os_str(),
 			self.nix_args.iter().map(OsString::as_os_str),
+			self.nix_system.clone(),
 		))?)
 	}
 
