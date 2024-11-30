@@ -7,7 +7,7 @@ pub struct NixExprBuilder {
 	pub(crate) out: String,
 	used_fields: Vec<Value>,
 }
-trait AttrSetValue {
+pub trait AttrSetValue {
 	fn to_builder(self) -> NixExprBuilder;
 }
 trait Primitive {}

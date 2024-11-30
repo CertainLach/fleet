@@ -41,6 +41,17 @@
           type = str;
           description = "Secret public data (only available for plaintext)";
         };
+
+        expectedGenerationData = mkOption {
+          type = unspecified;
+          description = "Data that gets embedded into secret part";
+          default = null;
+        };
+        generationData = mkOption {
+          type = unspecified;
+          description = "Data that is embedded into secret part";
+          default = null;
+        };
       };
       config = {
         hash = hashString "sha1" config.raw;

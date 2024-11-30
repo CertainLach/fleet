@@ -117,4 +117,8 @@ pub struct FleetSecret {
 
 	#[serde(flatten)]
 	pub parts: BTreeMap<String, FleetSecretPart>,
+
+	#[serde(default)]
+	#[serde(skip_serializing_if = "Value::is_null")]
+	pub generation_data: Value,
 }

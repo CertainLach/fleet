@@ -288,6 +288,8 @@ async fn generate_impure(
 		created_at,
 		expires_at,
 		parts,
+		// TODO: Fill with expected
+		generation_data: serde_json::Value::Null,
 	})
 }
 async fn generate(
@@ -507,6 +509,7 @@ impl Secret {
 							created_at: Utc::now(),
 							expires_at,
 							parts,
+							generation_data: serde_json::Value::Null,
 						},
 					},
 				);
@@ -534,6 +537,7 @@ impl Secret {
 						created_at: Utc::now(),
 						expires_at: None,
 						parts: BTreeMap::new(),
+						generation_data: serde_json::Value::Null,
 					}
 				};
 
