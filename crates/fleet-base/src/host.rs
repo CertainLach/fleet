@@ -1,5 +1,6 @@
 use std::{
 	cell::OnceCell,
+	collections::BTreeSet,
 	ffi::{OsStr, OsString},
 	fmt::Display,
 	io::Write,
@@ -312,6 +313,23 @@ impl ConfigHost {
 }
 
 impl Config {
+	pub async fn tagged_hostnames(&self, tag: &str) -> Result<Vec<String>> {
+		let config = &self.config_field;
+		let tagged: Vec<String> = nix_go_json!(config.taggedWith[{ tag }]);
+		Ok(tagged)
+	}
+	pub async fn expand_owner_set(&self, owners: Vec<String>) -> Result<BTreeSet<String>> {
+		let mut out = BTreeSet::new();
+		for owner in owners {
+			if let Some(tag) = owner.strip_prefix('@') {
+				let hosts = self.tagged_hostnames(tag).await?;
+				out.extend(hosts);
+			} else {
+				out.insert(owner);
+			}
+		}
+		Ok(out)
+	}
 	pub fn local_host(&self) -> ConfigHost {
 		ConfigHost {
 			config: self.clone(),

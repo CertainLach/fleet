@@ -45,6 +45,7 @@ impl Config {
 	}
 
 	pub async fn recipients(&self, hosts: Vec<String>) -> Result<Vec<impl Recipient>> {
+		let hosts = self.expand_owner_set(hosts).await?;
 		futures::stream::iter(hosts.iter())
 			.then(|m| self.recipient(m.as_ref()))
 			.try_collect::<Vec<_>>()

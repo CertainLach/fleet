@@ -130,13 +130,28 @@ pub enum Secret {
 	},
 }
 
+fn secret_needs_regeneration(
+	secret: &FleetSecret,
+	expected_generation_data: &serde_json::Value,
+) -> bool {
+	let data_is_expected = secret.generation_data == *expected_generation_data;
+	// TODO: Leeway?
+	let expired = secret
+		.expires_at
+		.map(|expiration| expiration < Utc::now())
+		.unwrap_or(false);
+	expired || !data_is_expected
+}
+
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip(config, secret, field, prefer_identities, batch))]
-async fn update_owner_set(
+async fn maybe_regenerate_shared_secret(
 	secret_name: &str,
 	config: &Config,
 	mut secret: FleetSharedSecret,
 	field: Value,
 	expected_owners: &[String],
+	expected_generation_data: serde_json::Value,
 	prefer_identities: &[String],
 	batch: Option<NixBuildBatch>,
 ) -> Result<FleetSharedSecret> {
@@ -145,12 +160,18 @@ async fn update_owner_set(
 	let set = original_set.iter().collect::<BTreeSet<_>>();
 	let expected_set = expected_owners.iter().collect::<BTreeSet<_>>();
 
-	if set == expected_set {
+	let regeneration_required =
+		secret_needs_regeneration(&secret.secret, &expected_generation_data);
+
+	if set == expected_set && !regeneration_required {
 		info!("no need to update owner list, it is already correct");
 		return Ok(secret);
 	}
 
-	let should_regenerate = if set.difference(&expected_set).next().is_some() {
+	let should_regenerate = if regeneration_required {
+		info!("secret has its generation data changed, regeneration is required");
+		true
+	} else if set.difference(&expected_set).next().is_some() {
 		// TODO: Remove this warning for revokable secrets.
 		warn!("host was removed from secret owners, but until this host rebuild, the secret will still be stored on it.");
 		nix_go_json!(field.regenerateOnOwnerRemoved)
@@ -161,9 +182,16 @@ async fn update_owner_set(
 	};
 
 	if should_regenerate {
-		info!("secret is owner-dependent, will regenerate");
-		let generated =
-			generate_shared(config, secret_name, field, expected_owners.to_vec(), batch).await?;
+		info!("secret needs to be regenerated");
+		let generated = generate_shared(
+			config,
+			secret_name,
+			field,
+			expected_owners.to_vec(),
+			expected_generation_data,
+			batch,
+		)
+		.await?;
 		Ok(generated)
 	} else {
 		drop(batch);
@@ -216,7 +244,8 @@ async fn generate_impure(
 	_display_name: &str,
 	secret: Value,
 	default_generator: Value,
-	owners: &[String],
+	expected_owners: &[String],
+	expected_generation_data: serde_json::Value,
 	batch: Option<NixBuildBatch>,
 ) -> Result<FleetSecret> {
 	let generator = nix_go!(secret.generator);
@@ -232,7 +261,7 @@ async fn generate_impure(
 	let mk_secret_generators = nix_go!(on_pkgs.mkSecretGenerators);
 
 	let mut recipients = Vec::new();
-	for owner in owners {
+	for owner in expected_owners {
 		let key = config.key(owner).await?;
 		recipients.push(key);
 	}
@@ -288,15 +317,15 @@ async fn generate_impure(
 		created_at,
 		expires_at,
 		parts,
-		// TODO: Fill with expected
-		generation_data: serde_json::Value::Null,
+		generation_data: expected_generation_data,
 	})
 }
 async fn generate(
 	config: &Config,
 	display_name: &str,
 	secret: Value,
-	owners: &[String],
+	expected_owners: &[String],
+	expected_generation_data: serde_json::Value,
 	batch: Option<NixBuildBatch>,
 ) -> Result<FleetSecret> {
 	let generator = nix_go!(secret.generator);
@@ -335,13 +364,21 @@ async fn generate(
 				display_name,
 				secret,
 				default_generator,
-				owners,
+				expected_owners,
+				expected_generation_data,
 				batch,
 			)
 			.await
 		}
 		GeneratorKind::Pure => {
-			generate_pure(config, display_name, secret, default_generator, owners).await
+			generate_pure(
+				config,
+				display_name,
+				secret,
+				default_generator,
+				expected_owners,
+			)
+			.await
 		}
 	}
 }
@@ -350,11 +387,20 @@ async fn generate_shared(
 	display_name: &str,
 	secret: Value,
 	expected_owners: Vec<String>,
+	expected_generation_data: serde_json::Value,
 	batch: Option<NixBuildBatch>,
 ) -> Result<FleetSharedSecret> {
 	// let owners: Vec<String> = nix_go_json!(secret.expectedOwners);
 	Ok(FleetSharedSecret {
-		secret: generate(config, display_name, secret, &expected_owners, batch).await?,
+		secret: generate(
+			config,
+			display_name,
+			secret,
+			&expected_owners,
+			expected_generation_data,
+			batch,
+		)
+		.await?,
 		owners: expected_owners,
 	})
 }
@@ -615,13 +661,15 @@ impl Secret {
 
 				let config_field = &config.config_field;
 				let field = nix_go!(config_field.sharedSecrets[{ name }]);
+				let expected_generation_data = nix_go_json!(field.expectedGenerationData);
 
-				let updated = update_owner_set(
+				let updated = maybe_regenerate_shared_secret(
 					&name,
 					config,
 					secret,
 					field,
 					&target_machines,
+					expected_generation_data,
 					&prefer_identities,
 					None,
 				)
@@ -630,7 +678,9 @@ impl Secret {
 			}
 			Secret::Regenerate { prefer_identities } => {
 				info!("checking for secrets to regenerate");
+				let stored_shared_set = config.list_shared().into_iter().collect::<HashSet<_>>();
 				{
+					// Generate missing shared
 					let shared_batch = None;
 					let _span = info_span!("shared").entered();
 					let expected_shared_set = config
@@ -638,14 +688,15 @@ impl Secret {
 						.await?
 						.into_iter()
 						.collect::<HashSet<_>>();
-					let shared_set = config.list_shared().into_iter().collect::<HashSet<_>>();
-					for missing in expected_shared_set.difference(&shared_set) {
+					for missing in expected_shared_set.difference(&stored_shared_set) {
 						let config_field = &config.config_field;
 						let secret = nix_go!(config_field.sharedSecrets[{ missing }]);
+						let expected_generation_data: serde_json::Value =
+							nix_go_json!(secret.expectedGenerationData);
 						let expected_owners: Option<Vec<String>> =
 							nix_go_json!(secret.expectedOwners);
 						let Some(expected_owners) = expected_owners else {
-							// TODO: Might still need to regenerate
+							// Can't generate this missing secret, as it has no defined owners.
 							continue;
 						};
 						info!("generating secret: {missing}");
@@ -654,6 +705,7 @@ impl Secret {
 							missing,
 							secret,
 							expected_owners,
+							expected_generation_data,
 							shared_batch.clone(),
 						)
 						.in_current_span()
@@ -681,11 +733,13 @@ impl Secret {
 					for missing in expected_set.difference(&stored_set) {
 						info!("generating secret: {missing}");
 						let secret = host.secret_field(missing).in_current_span().await?;
+						let expected_generation_data = nix_go_json!(secret.expectedGenerationData);
 						let generated = match generate(
 							config,
 							missing,
 							secret,
 							&[host.name.clone()],
+							expected_generation_data,
 							hosts_batch.clone(),
 						)
 						.in_current_span()
@@ -699,9 +753,35 @@ impl Secret {
 						};
 						config.insert_secret(&host.name, missing.to_string(), generated)
 					}
+					for name in stored_set {
+						info!("updating secret: {name}");
+						let data = config.host_secret(&host.name, &name)?;
+						let secret = host.secret_field(&name).in_current_span().await?;
+						let expected_generation_data = nix_go_json!(secret.expectedGenerationData);
+						if secret_needs_regeneration(&data, &expected_generation_data) {
+							let generated = match generate(
+								config,
+								&name,
+								secret,
+								&[host.name.clone()],
+								expected_generation_data,
+								hosts_batch.clone(),
+							)
+							.in_current_span()
+							.await
+							{
+								Ok(v) => v,
+								Err(e) => {
+									error!("{e:?}");
+									continue;
+								}
+							};
+							config.insert_secret(&host.name, name.to_string(), generated)
+						}
+					}
 				}
 				let mut to_remove = Vec::new();
-				for name in &config.list_shared() {
+				for name in &stored_shared_set {
 					info!("updating secret: {name}");
 					let data = config.shared_secret(name)?;
 					let config_field = &config.config_field;
@@ -714,14 +794,16 @@ impl Secret {
 					}
 
 					let secret = nix_go!(config_field.sharedSecrets[{ name }]);
+					let expected_generation_data = nix_go_json!(secret.expectedGenerationData);
 					config.replace_shared(
 						name.to_owned(),
-						update_owner_set(
+						maybe_regenerate_shared_secret(
 							name,
 							config,
 							data,
 							secret,
 							&expected_owners,
+							expected_generation_data,
 							&prefer_identities,
 							None,
 						)

@@ -45,6 +45,11 @@
         description = "Derivation to evaluate for secret generation";
         default = null;
       };
+      expectedGenerationData = mkOption {
+        type = unspecified;
+        description = "Data that gets embedded into secret part";
+        default = null;
+      };
     };
   };
 in {
