@@ -225,6 +225,7 @@ impl NixSessionInner {
 	) -> Result<Self> {
 		let mut cmd = Command::new("nix");
 		cmd.arg("repl")
+			.args(["--option", "pure-eval", "true"])
 			.arg(flake)
 			.arg("--log-format")
 			.arg("internal-json");
