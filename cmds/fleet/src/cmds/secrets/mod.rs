@@ -136,14 +136,14 @@ async fn update_owner_set(
 	config: &Config,
 	mut secret: FleetSharedSecret,
 	field: Value,
-	updated_set: &[String],
+	expected_owners: &[String],
 	prefer_identities: &[String],
 	batch: Option<NixBuildBatch>,
 ) -> Result<FleetSharedSecret> {
 	let original_set = secret.owners.clone();
 
 	let set = original_set.iter().collect::<BTreeSet<_>>();
-	let expected_set = updated_set.iter().collect::<BTreeSet<_>>();
+	let expected_set = expected_owners.iter().collect::<BTreeSet<_>>();
 
 	if set == expected_set {
 		info!("no need to update owner list, it is already correct");
@@ -163,7 +163,7 @@ async fn update_owner_set(
 	if should_regenerate {
 		info!("secret is owner-dependent, will regenerate");
 		let generated =
-			generate_shared(config, secret_name, field, updated_set.to_vec(), batch).await?;
+			generate_shared(config, secret_name, field, expected_owners.to_vec(), batch).await?;
 		Ok(generated)
 	} else {
 		drop(batch);
@@ -185,12 +185,12 @@ async fn update_owner_set(
 			}
 			let host = config.host(identity_holder).await?;
 			let encrypted = host
-				.reencrypt(part.raw.clone(), updated_set.to_vec())
+				.reencrypt(part.raw.clone(), expected_owners.to_vec())
 				.await?;
 			part.raw = encrypted;
 		}
 
-		secret.owners = updated_set.to_vec();
+		secret.owners = expected_owners.to_vec();
 		Ok(secret)
 	}
 }
