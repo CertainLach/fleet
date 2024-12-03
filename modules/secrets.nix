@@ -63,7 +63,7 @@ in {
   config = {
     hosts =
       mapAttrs (_: secretMap: {
-        nixos.secrets = mapAttrs (_: s: removeAttrs s ["createdAt" "expiresAt"]) secretMap;
+        nixos.secrets = mapAttrs (_: s: removeAttrs s ["createdAt" "expiresAt" "generationData"]) secretMap;
       })
       config.data.hostSecrets;
     nixpkgs.overlays = [

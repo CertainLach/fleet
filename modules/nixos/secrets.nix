@@ -100,6 +100,7 @@
       "mode"
       "group"
       "owner"
+      "expectedGenerationData"
     ]));
   secretsFile = pkgs.writeTextFile {
     name = "secrets.json";
