@@ -1,17 +1,19 @@
+use std::time::Instant;
+
 use anyhow::bail;
 use tracing::{debug, warn};
-use std::time::Instant;
 
 use crate::{nix_go_json, Value};
 
+#[tracing::instrument(level = "info", skip(val))]
 pub async fn assert_warn(action: &str, val: &Value) -> anyhow::Result<()> {
 	let before_errors = Instant::now();
 	let errors: Vec<String> = nix_go_json!(val.errors);
 	debug!("errors evaluation took {:?}", before_errors.elapsed());
 	if !errors.is_empty() {
 		bail!(
-			"{action} failed with error{}{}",
-			(errors.len() != 1).then_some("s:\n- ").unwrap_or(": "),
+			"failed with error{}{}",
+			if errors.len() != 1 { "s:\n- " } else { ": " },
 			errors.join("\n- "),
 		);
 	}
@@ -21,8 +23,8 @@ pub async fn assert_warn(action: &str, val: &Value) -> anyhow::Result<()> {
 	debug!("warnings evaluation took {:?}", before_errors.elapsed());
 	if !warnings.is_empty() {
 		warn!(
-			"{action} completed with warning{}{}",
-			(warnings.len() != 1).then_some("s:\n- ").unwrap_or(": "),
+			"completed with warning{}{}",
+			if warnings.len() != 1 { "s:\n- " } else { ": " },
 			warnings.join("\n- "),
 		);
 	}

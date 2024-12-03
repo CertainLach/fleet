@@ -52,6 +52,7 @@
         default = null;
       };
     };
+    config = {};
   };
 
   hostSecretData = {
@@ -78,6 +79,7 @@
         default = null;
       };
     };
+    config = {};
   };
 in {
   options.data = mkDataOption ({config, ...}: {

@@ -181,7 +181,7 @@ impl FleetOpts {
 	}
 
 	// TODO: Config should be detached from opts.
-	pub async fn build(&self, nix_args: Vec<OsString>) -> Result<Config> {
+	pub async fn build(&self, nix_args: Vec<OsString>, assert: bool) -> Result<Config> {
 		let directory = current_dir()?;
 
 		let pool = NixSessionPool::new(
@@ -204,7 +204,9 @@ impl FleetOpts {
 
 		let config_field = nix_go!(fleet_field.config);
 
-		assert_warn("fleet config evaluation", &config_field).await?;
+		if assert {
+			assert_warn("fleet config evaluation", &config_field).await?;
+		}
 
 		let import = nix_go!(builtins_field.import);
 		let overlays = nix_go!(config_field.nixpkgs.overlays);
