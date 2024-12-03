@@ -79,7 +79,14 @@ impl NixBuildBatch {
 				}
 				Err(e) => {
 					for NixBuildTask(v, o) in deps {
-						let s = v.to_string_weak().await.expect("drv is string-like");
+						let s = v.to_string_weak().await;
+						let s = match s {
+							Ok(s) => s,
+							Err(e) => {
+								let _ = o.send(Err(e));
+								continue;
+							}
+						};
 						if PathBuf::from(s).exists() {
 							let _ = o.send(v.build().await);
 						} else {
