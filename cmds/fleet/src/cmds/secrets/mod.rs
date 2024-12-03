@@ -114,6 +114,9 @@ pub enum Secret {
 		/// regeneration
 		#[clap(long)]
 		prefer_identities: Vec<String>,
+		/// Only regenerate shared secrets
+		#[clap(long)]
+		skip_hosts: bool,
 	},
 	List {},
 	Edit {
@@ -676,7 +679,10 @@ impl Secret {
 				.await?;
 				config.replace_shared(name, updated);
 			}
-			Secret::Regenerate { prefer_identities } => {
+			Secret::Regenerate {
+				prefer_identities,
+				skip_hosts,
+			} => {
 				info!("checking for secrets to regenerate");
 				let stored_shared_set = config.list_shared().into_iter().collect::<HashSet<_>>();
 				{
@@ -713,55 +719,32 @@ impl Secret {
 						config.replace_shared(missing.to_string(), shared)
 					}
 				}
-				let hosts_batch = None;
-				for host in config.list_hosts().await? {
-					if opts.should_skip(&host).await? {
-						continue;
-					}
+				if !skip_hosts {
+					let hosts_batch = None;
+					for host in config.list_hosts().await? {
+						if opts.should_skip(&host).await? {
+							continue;
+						}
 
-					let _span = info_span!("host", host = host.name).entered();
-					let expected_set = host
-						.list_configured_secrets()
-						.in_current_span()
-						.await?
-						.into_iter()
-						.collect::<HashSet<_>>();
-					let stored_set = config
-						.list_secrets(&host.name)
-						.into_iter()
-						.collect::<HashSet<_>>();
-					for missing in expected_set.difference(&stored_set) {
-						info!("generating secret: {missing}");
-						let secret = host.secret_field(missing).in_current_span().await?;
-						let expected_generation_data = nix_go_json!(secret.expectedGenerationData);
-						let generated = match generate(
-							config,
-							missing,
-							secret,
-							&[host.name.clone()],
-							expected_generation_data,
-							hosts_batch.clone(),
-						)
-						.in_current_span()
-						.await
-						{
-							Ok(v) => v,
-							Err(e) => {
-								error!("{e:?}");
-								continue;
-							}
-						};
-						config.insert_secret(&host.name, missing.to_string(), generated)
-					}
-					for name in stored_set {
-						info!("updating secret: {name}");
-						let data = config.host_secret(&host.name, &name)?;
-						let secret = host.secret_field(&name).in_current_span().await?;
-						let expected_generation_data = nix_go_json!(secret.expectedGenerationData);
-						if secret_needs_regeneration(&data, &expected_generation_data) {
+						let _span = info_span!("host", host = host.name).entered();
+						let expected_set = host
+							.list_configured_secrets()
+							.in_current_span()
+							.await?
+							.into_iter()
+							.collect::<HashSet<_>>();
+						let stored_set = config
+							.list_secrets(&host.name)
+							.into_iter()
+							.collect::<HashSet<_>>();
+						for missing in expected_set.difference(&stored_set) {
+							info!("generating secret: {missing}");
+							let secret = host.secret_field(missing).in_current_span().await?;
+							let expected_generation_data =
+								nix_go_json!(secret.expectedGenerationData);
 							let generated = match generate(
 								config,
-								&name,
+								missing,
 								secret,
 								&[host.name.clone()],
 								expected_generation_data,
@@ -776,7 +759,34 @@ impl Secret {
 									continue;
 								}
 							};
-							config.insert_secret(&host.name, name.to_string(), generated)
+							config.insert_secret(&host.name, missing.to_string(), generated)
+						}
+						for name in stored_set {
+							info!("updating secret: {name}");
+							let data = config.host_secret(&host.name, &name)?;
+							let secret = host.secret_field(&name).in_current_span().await?;
+							let expected_generation_data =
+								nix_go_json!(secret.expectedGenerationData);
+							if secret_needs_regeneration(&data, &expected_generation_data) {
+								let generated = match generate(
+									config,
+									&name,
+									secret,
+									&[host.name.clone()],
+									expected_generation_data,
+									hosts_batch.clone(),
+								)
+								.in_current_span()
+								.await
+								{
+									Ok(v) => v,
+									Err(e) => {
+										error!("{e:?}");
+										continue;
+									}
+								};
+								config.insert_secret(&host.name, name.to_string(), generated)
+							}
 						}
 					}
 				}
