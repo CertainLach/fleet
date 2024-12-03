@@ -94,6 +94,17 @@ pub enum Secret {
 		#[clap(short = 'p', long, default_value = "secret")]
 		part: String,
 	},
+	/// Read secret from remote host, requires sudo on said host
+	ReadShared {
+		name: String,
+		/// Which private secret part to read
+		#[clap(short = 'p', long, default_value = "secret")]
+		part: String,
+		/// Which host should we use to decrypt, in case if reencryption is required, without
+		/// regeneration
+		#[clap(long)]
+		prefer_identities: Vec<String>,
+	},
 	UpdateShared {
 		name: String,
 
@@ -632,6 +643,33 @@ impl Secret {
 					secret.raw.data.clone()
 				};
 
+				stdout().write_all(&data)?;
+			}
+			Secret::ReadShared {
+				name,
+				part: part_name,
+				prefer_identities,
+			} => {
+				let secret = config.shared_secret(&name)?;
+				let Some(part) = secret.secret.parts.get(&part_name) else {
+					bail!("no part {part_name} in secret {name}");
+				};
+				let data = if part.raw.encrypted {
+					let identity_holder = if !prefer_identities.is_empty() {
+						prefer_identities
+							.iter()
+							.find(|i| secret.owners.iter().any(|s| s == *i))
+					} else {
+						secret.owners.first()
+					};
+					let Some(identity_holder) = identity_holder else {
+						bail!("no available holder found");
+					};
+					let host = config.host(identity_holder).await?;
+					host.decrypt(part.raw.clone()).await?
+				} else {
+					part.raw.data.clone()
+				};
 				stdout().write_all(&data)?;
 			}
 			Secret::UpdateShared {

@@ -9,7 +9,6 @@
 //     }
 // }
 
-
 fn main() {
 	//
 	// let mut libnix = bindgen::builder().header_contents("nix.h", "
