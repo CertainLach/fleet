@@ -46,7 +46,6 @@ in rec {
     mkPassword = {size ? 32}: {
       coreutils,
       mkSecretGenerator,
-      ...
     }:
       mkSecretGenerator {
         script = ''
@@ -58,7 +57,7 @@ in rec {
     mkEd25519 = {
       noEmbedPublic ? false,
       encoding ? null,
-    }: {mkSecretGenerator, ...}:
+    }: {mkSecretGenerator}:
       mkSecretGenerator {
         script = ''
           mkdir $out
@@ -68,7 +67,7 @@ in rec {
         '';
       };
 
-    mkX25519 = {encoding ? null}: {mkSecretGenerator, ...}:
+    mkX25519 = {encoding ? null}: {mkSecretGenerator}:
       mkSecretGenerator {
         script = ''
           mkdir $out
@@ -80,7 +79,6 @@ in rec {
     mkRsa = {size ? 4096}: {
       openssl,
       mkSecretGenerator,
-      ...
     }:
       mkSecretGenerator {
         script = ''
@@ -98,7 +96,7 @@ in rec {
       count ? 32,
       encoding,
       noNuls ? false,
-    }: {mkSecretGenerator, ...}:
+    }: {mkSecretGenerator}:
       mkSecretGenerator {
         script = ''
           mkdir $out

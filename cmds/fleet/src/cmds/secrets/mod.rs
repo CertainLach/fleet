@@ -265,13 +265,14 @@ async fn generate_impure(
 	let generator = nix_go!(secret.generator);
 	let on: Option<String> = nix_go_json!(default_generator.impureOn);
 
+	let nixpkgs = &config.nixpkgs;
+
 	let host = if let Some(on) = &on {
 		config.host(on).await?
 	} else {
 		config.local_host()
 	};
 	let on_pkgs = host.pkgs().await?;
-	let call_package = nix_go!(on_pkgs.callPackage);
 	let mk_secret_generators = nix_go!(on_pkgs.mkSecretGenerators);
 
 	let mut recipients = Vec::new();
@@ -280,8 +281,11 @@ async fn generate_impure(
 		recipients.push(key);
 	}
 	let generators = nix_go!(mk_secret_generators(Obj { recipients }));
+	let pkgs_and_generators = nix_go!(on_pkgs + generators);
 
-	let generator = nix_go!(call_package(generator)(generators));
+	let call_package = nix_go!(nixpkgs.lib.callPackageWith(pkgs_and_generators));
+
+	let generator = nix_go!(call_package(generator)(Obj {}));
 
 	let generator = generator.build_maybe_batch(batch).await?;
 	let generator = generator
@@ -353,8 +357,8 @@ async fn generate(
 			bail!("generator should be lambda, got {gen_ty}");
 		}
 	}
+	let nixpkgs = &config.nixpkgs;
 	let default_pkgs = &config.default_pkgs;
-	let default_call_package = nix_go!(default_pkgs.callPackage);
 	let default_mk_secret_generators = nix_go!(default_pkgs.mkSecretGenerators);
 	// Generators provide additional information in passthru, to access
 	// passthru we should call generator, but information about where this generator is supposed to build
@@ -367,7 +371,10 @@ async fn generate(
 	let generators = nix_go!(default_mk_secret_generators(Obj {
 		recipients: <Vec<String>>::new(),
 	}));
-	let default_generator = nix_go!(default_call_package(generator)(generators));
+	let pkgs_and_generators = nix_go!(default_pkgs + generators);
+
+	let call_package = nix_go!(nixpkgs.lib.callPackageWith(pkgs_and_generators));
+	let default_generator = nix_go!(call_package(generator)(Obj {}));
 
 	let kind: GeneratorKind = nix_go_json!(default_generator.generatorKind);
 

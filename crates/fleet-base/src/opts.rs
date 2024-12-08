@@ -225,6 +225,7 @@ impl FleetOpts {
 			nix_args,
 			config_field,
 			default_pkgs,
+			nixpkgs,
 			localhost: self.localhost.to_owned(),
 		})))
 	}

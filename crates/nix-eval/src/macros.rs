@@ -231,6 +231,9 @@ macro_rules! nix_go {
 	(@o($o:ident) | $($var:tt)*) => {
 		$o.push(Index::Pipe($crate::nix_expr_inner!($($var)+)));
 	};
+	(@o($o:ident) + $($var:tt)*) => {
+		$o.push(Index::Merge($crate::nix_expr_inner!($($var)+)));
+	};
 	(@o($o:ident)) => {};
 	($field:ident $($tt:tt)+) => {{
 		use $crate::{nix_go, Index};

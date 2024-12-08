@@ -34,6 +34,7 @@ pub struct FleetConfigInternals {
 
 	/// import nixpkgs {system = local};
 	pub default_pkgs: Value,
+	pub nixpkgs: Value,
 
 	pub nix_session: NixSession,
 }

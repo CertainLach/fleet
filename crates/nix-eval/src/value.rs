@@ -15,6 +15,7 @@ pub enum Index {
 	Expr(NixExprBuilder),
 	ExprApply(NixExprBuilder),
 	Pipe(NixExprBuilder),
+	Merge(NixExprBuilder),
 }
 impl Index {
 	pub fn var(v: impl AsRef<str>) -> Self {
@@ -55,6 +56,9 @@ impl fmt::Display for Index {
 			}
 			Index::Pipe(e) => {
 				write!(f, "<map>({})", e.out)
+			}
+			Index::Merge(e) => {
+				write!(f, "//({})", e.out)
 			}
 		}
 	}
@@ -156,6 +160,12 @@ impl Value {
 					used_fields.push(index.clone());
 					let index = format!("sess_field_{}", index.0.value.expect("value"));
 					query = format!("({index} {query})");
+				}
+				Index::Merge(v) => {
+					let index = Value::new(self.0.session.clone(), &v.out).await?;
+					used_fields.push(index.clone());
+					let index = format!("sess_field_{}", index.0.value.expect("value"));
+					query = format!("({query} // {index})");
 				}
 			}
 		}
