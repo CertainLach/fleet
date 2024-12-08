@@ -210,9 +210,10 @@ impl FleetOpts {
 
 		let import = nix_go!(builtins_field.import);
 		let overlays = nix_go!(config_field.nixpkgs.overlays);
-		let nixpkgs = nix_go!(config_field.nixpkgs.buildUsing | import);
+		let nixpkgs = nix_go!(config_field.nixpkgs.buildUsing);
+		let nixpkgs_imported = nix_go!(nixpkgs | import);
 
-		let default_pkgs = nix_go!(nixpkgs(Obj {
+		let default_pkgs = nix_go!(nixpkgs_imported(Obj {
 			overlays,
 			system: self.local_system.clone(),
 		}));
