@@ -15,7 +15,7 @@
     options = {
       raw = mkOption {
         type = nullOr str;
-        description = "Encrypted + encoded secret data";
+        description = "Raw secret data in unspecified encoded and optionally encrypted format.";
         default = null;
       };
     };
@@ -26,29 +26,28 @@
     options = {
       createdAt = mkOption {
         type = str;
-        description = "When this secret was (re)generated";
+        description = "Timestamp of secret generation/last rotation.";
         default = null;
       };
       expiresAt = mkOption {
         type = nullOr str;
-        description = "On which date this secret will expire, someone should regenerate this secret before it expires.";
+        description = "Expiration timestamp triggering mandatory secret rotation.";
         default = null;
       };
 
       owners = mkOption {
         type = listOf str;
         description = ''
-          For which owners this secret is currently encrypted,
-          if not matches expectedOwners - then this secret is considered outdated, and
-          should be regenerated/reencrypted.
+          List of hosts currently authorized to decrypt this shared secret.
 
-          Imported from fleet.nix
+          If owners differ from expected owners, the secret is considered outdated
+          and requires regeneration or re-encryption.
         '';
         default = [];
       };
       generationData = mkOption {
         type = unspecified;
-        description = "Data that is embedded into secret part";
+        description = "Contextual metadata associated with secret part.";
         default = null;
       };
     };
@@ -60,22 +59,22 @@
     options = {
       createdAt = mkOption {
         type = str;
-        description = "When this secret was (re)generated";
+        description = "Timestamp of secret generation/last rotation.";
         default = null;
       };
       expiresAt = mkOption {
         type = nullOr str;
-        description = "On which date this secret will expire, someone should regenerate this secret before it expires.";
+        description = "Expiration timestamp triggering mandatory secret rotation.";
         default = null;
       };
       shared = mkOption {
         type = bool;
-        description = "On which date this secret will expire, someone should regenerate this secret before it expires.";
+        description = "Indicates if secret is a shared secret, so other hosts might have the same piece of secret data.";
         default = false;
       };
       generationData = mkOption {
         type = unspecified;
-        description = "Data that is embedded into secret part";
+        description = "Contextual metadata associated with secret part.";
         default = null;
       };
     };
@@ -87,12 +86,12 @@ in {
       sharedSecrets = mkOption {
         type = attrsOf (submodule sharedSecretData);
         default = {};
-        description = "Stored shared secret data.";
+        description = "Shared secret data.";
       };
       hostSecrets = mkOption {
         type = attrsOf (attrsOf (submodule hostSecretData));
         default = {};
-        description = "Host secrets.";
+        description = "Host-specific secrets.";
         internal = true;
       };
     };

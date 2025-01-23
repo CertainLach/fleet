@@ -4,7 +4,7 @@
   ...
 }: let
   inherit (lib.options) mkOption literalExpression;
-  inherit (lib.types) unspecified nullOr listOf str bool attrsOf submodule;
+  inherit (lib.types) unspecified nullOr listOf str bool attrsOf submodule functionTo package;
   inherit (lib.strings) concatStringsSep;
   inherit (lib.attrsets) mapAttrs;
 
@@ -13,19 +13,20 @@
       expectedOwners = mkOption {
         type = nullOr (listOf str);
         description = ''
-          List of hosts to encrypt secret for. null if managed by user (= via owners field from fleet.nix)
+          Specifies the list of hosts authorized to decrypt and access this shared secret.
 
-          Secrets would be decrypted and stored to /run/secrets/$\{name} on owners
+          When null, secret ownership is managed manually via fleet.nix and CLI.
+          Decrypted secrets will be stored at /run/secrets/$\{name} on authorized hosts.
         '';
         default = null;
       };
-      # TODO: Aren't those options may be just desugared to data/expectedData?
       regenerateOnOwnerAdded = mkOption {
         type = bool;
         description = ''
-          Is this secret owner-dependent, and needs to be regenerated on ownership set change, or it may be just reencrypted.
+          Controls whether the secret must be regenerated when new owners are added.
 
-          You want to have this option set to true, when this secret contains some reference to its owners, i.e x509 SANs.
+          Set to true when the secret contains owner-specific references (e.g., X.509 Subject Alternative Names).
+          When true, adding a new owner will trigger secret regeneration instead of simple re-encryption.
         '';
       };
       regenerateOnOwnerRemoved = mkOption {
@@ -33,21 +34,25 @@
         defaultText = literalExpression "regenerateOnOwnerAdded";
         type = bool;
         description = ''
-          Should this secret be removed on owner removal, or it may be just reencrypted
+          Determines secret behavior when owners are removed from the configuration.
 
-          Most probably its value should be equal to regenerateOnOwnerAdded, override only if you know what are you doing.
-          Contrary to regenerateOnOwnerAdded, you may want to set this option to false, when host permissions are revoked
-          in some other way than by this secret ownership, I.e by firewall/etc.
+          Typically mirrors regenerateOnOwnerAdded. Override cautiously.
+          Set to false if host permissions are revoked through alternative mechanisms like firewall rules.
         '';
       };
       generator = mkOption {
-        type = nullOr unspecified;
-        description = "Derivation to evaluate for secret generation";
+        type = nullOr (functionTo package);
+        description = ''
+          Function evaluating to nix derivation responsible for (re)generating the secret's content.
+
+          An input to this function - `pkgs` of a generator host with implementation-defined representation of extra encryption data,
+          use `mkSecretGenerator` helpers to implement own generators.
+        '';
         default = null;
       };
       expectedGenerationData = mkOption {
         type = unspecified;
-        description = "Data that gets embedded into secret part";
+        description = "Contextual metadata embedded within the secret part value";
         default = null;
       };
     };
@@ -57,7 +62,7 @@ in {
     sharedSecrets = mkOption {
       type = attrsOf (submodule sharedSecret);
       default = {};
-      description = "Shared secrets";
+      description = "Collection of secrets shared across multiple hosts with configurable ownership";
     };
   };
   config = {
