@@ -234,8 +234,8 @@ fn main() -> Result<()> {
 			let recipients = load_identities()?;
 			write_private(&recipients, &output, stdin(), encoding)?;
 		}
-		Opts::Generate(gen) => {
-			match gen {
+		Opts::Generate(generate) => {
+			match generate {
 				Generate::Ed25519 {
 					public,
 					private,

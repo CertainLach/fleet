@@ -1,7 +1,8 @@
 [package]
 name = "better-command"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 regex = "1.10"

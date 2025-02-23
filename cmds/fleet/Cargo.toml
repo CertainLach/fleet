@@ -3,7 +3,8 @@ name = "fleet"
 description = "NixOS configuration management"
 version = "0.2.0"
 authors = ["Yaroslav Bolyukin <iam@lach.pw>"]
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 nixlike.workspace = true

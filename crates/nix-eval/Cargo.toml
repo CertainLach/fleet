@@ -1,8 +1,9 @@
 [package]
 name = "nix-eval"
-edition = "2021"
 version.workspace = true
 build = "build.rs"
+edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true

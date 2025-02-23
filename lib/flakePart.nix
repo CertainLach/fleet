@@ -65,11 +65,12 @@ in {
                       else data;
                     nixpkgs.buildUsing = mkOptionDefault bootstrapNixpkgs;
                     nixpkgs.overlays = [
-                      (final: prev:
-                        import ../pkgs {
+                      (final: prev: {
+                        inherit (import ../pkgs {
                           inherit (prev) callPackage;
                           craneLib = crane.mkLib prev;
-                        })
+                        }) fleet-install-secrets;
+                      })
                     ];
                   };
                 }
