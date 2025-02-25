@@ -70,6 +70,33 @@ struct Generation {
 	current: bool,
 	datetime: String,
 }
+
+fn parse_generation_line(g: &str) -> Option<Generation> {
+	let mut parts = g.split_whitespace();
+	let id = parts.next()?;
+	let id: u32 = id.parse().ok()?;
+	let date = parts.next()?;
+	let time = parts.next()?;
+	let current = if let Some(current) = parts.next() {
+		if current == "(current)" {
+			Some(true)
+		} else {
+			None
+		}
+	} else {
+		Some(false)
+	};
+	let current = current?;
+	if parts.next().is_some() {
+		warn!("unexpected text after generation: {g}");
+	}
+	Some(Generation {
+		id,
+		current,
+		datetime: format!("{date} {time}"),
+	})
+}
+
 async fn get_current_generation(host: &ConfigHost) -> Result<Generation> {
 	let mut cmd = host.cmd("nix-env").await?;
 	cmd.comparg("--profile", "/nix/var/nix/profiles/system")
@@ -81,33 +108,9 @@ async fn get_current_generation(host: &ConfigHost) -> Result<Generation> {
 		.map(|e| e.trim())
 		.filter(|&l| !l.is_empty())
 		.filter_map(|g| {
-			let gen: Option<Generation> = try {
-				let mut parts = g.split_whitespace();
-				let id = parts.next()?;
-				let id: u32 = id.parse().ok()?;
-				let date = parts.next()?;
-				let time = parts.next()?;
-				let current = if let Some(current) = parts.next() {
-					if current == "(current)" {
-						Some(true)
-					} else {
-						None
-					}
-				} else {
-					Some(false)
-				};
-				let current = current?;
-				if parts.next().is_some() {
-					warn!("unexpected text after generation: {g}");
-				}
-				Generation {
-					id,
-					current,
-					datetime: format!("{date} {time}"),
-				}
-			};
+			let gen = parse_generation_line(g);
 			if gen.is_none() {
-				warn!("bad generation: {g}")
+				warn!("bad generation: {g}");
 			}
 			gen
 		})
