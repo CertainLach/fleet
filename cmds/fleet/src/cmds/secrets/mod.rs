@@ -353,8 +353,12 @@ async fn generate(
 		if gen_ty == "null" {
 			bail!("secret has no generator defined, can't automatically generate it.");
 		}
-		if gen_ty != "lambda" {
-			bail!("generator should be lambda, got {gen_ty}");
+		if gen_ty == "set" {
+			if !generator.has_field("__functor").await? {
+				bail!("generator should be functor, got {gen_ty}");
+			}
+		} else if gen_ty != "lambda" {
+			bail!("generator should be functor, got {gen_ty}");
 		}
 	}
 	let nixpkgs = &config.nixpkgs;
