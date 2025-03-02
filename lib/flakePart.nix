@@ -69,7 +69,7 @@ in {
                         inherit (import ../pkgs {
                           inherit (prev) callPackage;
                           craneLib = crane.mkLib prev;
-                        }) fleet-install-secrets;
+                        }) fleet-install-secrets fleet-generator-helper;
                       })
                     ];
                   };
