@@ -4,7 +4,7 @@
   ...
 }: let
   inherit (lib.options) mkOption literalExpression;
-  inherit (lib.types) unspecified nullOr listOf str bool attrsOf submodule functionTo package unique;
+  inherit (lib.types) unspecified nullOr listOf str bool attrsOf submodule functionTo package uniq;
   inherit (lib.strings) concatStringsSep;
   inherit (lib.attrsets) mapAttrs;
 
@@ -41,7 +41,7 @@
         '';
       };
       generator = mkOption {
-        type = nullOr (unique (functionTo package));
+        type = uniq (nullOr (functionTo package));
         description = ''
           Function evaluating to nix derivation responsible for (re)generating the secret's content.
 

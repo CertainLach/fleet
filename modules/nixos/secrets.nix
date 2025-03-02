@@ -11,7 +11,7 @@
   inherit (lib.lists) optional;
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.modules) mkIf;
-  inherit (lib.types) submodule str attrsOf nullOr unspecified lazyAttrsOf;
+  inherit (lib.types) submodule str attrsOf nullOr unspecified lazyAttrsOf uniq functionTo package;
   inherit (fleetLib.strings) decodeRawSecret;
 
   sysConfig = config;
@@ -60,7 +60,7 @@
       };
 
       generator = mkOption {
-        type = nullOr unspecified;
+        type = uniq (nullOr (functionTo package));
         description = "Derivation to evaluate for secret generation";
         default = null;
       };
