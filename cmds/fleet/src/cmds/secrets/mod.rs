@@ -317,7 +317,7 @@ async fn generate_impure(
 
 	let mut parts = BTreeMap::new();
 	for part in host.read_dir(&out).await? {
-		if part == "created_at" || part == "expired_at" || part == "marker" {
+		if part == "created_at" || part == "expires_at" || part == "marker" {
 			continue;
 		}
 		let contents: SecretData = host
