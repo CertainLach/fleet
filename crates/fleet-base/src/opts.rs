@@ -6,7 +6,7 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use nix_eval::{nix_go, util::assert_warn, NixSessionPool, Value};
 use nom::{
@@ -196,7 +196,8 @@ impl FleetOpts {
 
 		let mut fleet_data_path = directory.clone();
 		fleet_data_path.push("fleet.nix");
-		let bytes = std::fs::read_to_string(fleet_data_path)?;
+		let bytes =
+			std::fs::read_to_string(fleet_data_path).context("reading fleet state (fleet.nix)")?;
 		let data: Mutex<FleetData> = nixlike::parse_str(&bytes)?;
 
 		let fleet_root = Value::binding(nix_session.clone(), "fleetConfigurations").await?;

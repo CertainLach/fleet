@@ -49,6 +49,7 @@ nom = "7.1.3"
 fleet-base = { version = "0.1.0", path = "../../crates/fleet-base" }
 
 [features]
+default = ["indicatif"]
 # Not quite stable
 indicatif = [
 	"dep:tracing-indicatif",

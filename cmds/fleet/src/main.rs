@@ -185,10 +185,6 @@ fn main() -> ExitCode {
 #[tokio::main]
 async fn async_main(opts: RootOpts) -> ExitCode {
 	if let Err(e) = main_real(opts).await {
-		// If I remove this line, the next error!() line gets eaten.
-		// This is a bug in indicatif, it needs to be fixed
-		#[cfg(feature = "indicatif")]
-		info!("fixme: this line gets eaten by tracing-indicatif on levels info+");
 		error!("{e:#}");
 		return ExitCode::FAILURE;
 	}
