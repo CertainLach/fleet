@@ -66,9 +66,9 @@ impl Prefetch {
 
 #[derive(Parser)]
 enum Opts {
-	/// Prepare systems for deployments
+	/// Build system closures
 	BuildSystems(BuildSystems),
-
+	/// Upload and switch system closures
 	Deploy(Deploy),
 	/// Secret management
 	#[clap(subcommand)]

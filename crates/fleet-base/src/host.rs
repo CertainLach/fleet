@@ -105,6 +105,14 @@ impl ConfigHost {
 		let path = cmd.run_string().await?;
 		Ok(path.trim_end().to_owned())
 	}
+	pub async fn file_exists(&self, path: impl AsRef<OsStr>) -> Result<bool> {
+		let mut cmd = self.cmd("sh").await?;
+		cmd.arg("-c")
+			.arg("test -e \"$1\" && echo true || echo false")
+			.arg("_")
+			.arg(path);
+		Ok(cmd.run_value().await?)
+	}
 	pub async fn read_file_bin(&self, path: impl AsRef<OsStr>) -> Result<Vec<u8>> {
 		let mut cmd = self.cmd("cat").await?;
 		cmd.arg(path);

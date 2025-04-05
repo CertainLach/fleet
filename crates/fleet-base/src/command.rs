@@ -5,6 +5,7 @@ use better_command::{Handler, NixHandler, PlainHandler};
 use futures::StreamExt;
 use itertools::Either;
 use openssh::{OverSsh, OwningCommand, Session};
+use serde::de::DeserializeOwned;
 use tokio::{io::AsyncRead, process::Command, select};
 use tokio_util::codec::{BytesCodec, FramedRead, LinesCodec};
 use tracing::debug;
@@ -229,6 +230,10 @@ impl MyCommand {
 	pub async fn run_string(self) -> Result<String> {
 		let bytes = self.run_bytes().await?;
 		Ok(String::from_utf8(bytes)?)
+	}
+	pub async fn run_value<T: DeserializeOwned>(self) -> Result<T> {
+		let v = self.run_string().await?;
+		Ok(serde_json::from_str(&v)?)
 	}
 	pub async fn run_bytes(self) -> Result<Vec<u8>> {
 		let str = self.clone().into_string();

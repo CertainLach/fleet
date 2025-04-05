@@ -1,6 +1,6 @@
-use std::{env::current_dir, os::unix::fs::symlink, path::PathBuf, time::Duration};
+use std::{env::current_dir, os::unix::fs::symlink, path::PathBuf, str::FromStr, time::Duration};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::{Parser, ValueEnum};
 use fleet_base::{
 	host::{Config, ConfigHost},
@@ -132,6 +132,7 @@ async fn deploy_task(
 	disable_rollback: bool,
 ) -> Result<()> {
 	let mut failed = false;
+
 	// TODO: Lockfile, to prevent concurrent system switch?
 	// TODO: If rollback target exists - bail, it should be removed. Lockfile will not work in case if rollback
 	// is scheduler on next boot (default behavior). On current boot - rollback activator will fail due to
@@ -332,6 +333,24 @@ impl BuildSystems {
 	}
 }
 
+#[derive(Clone, PartialEq, Copy)]
+enum DeployKind {
+	// NixOS => NixOS managed by fleet
+	UpgradeToFleet,
+	// NixOS managed by fleet => NixOS managed by fleet
+	Fleet,
+}
+impl FromStr for DeployKind {
+	type Err = anyhow::Error;
+	fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+		match s {
+			"upgrade-to-fleet" => Ok(Self::UpgradeToFleet),
+			"fleet" => Ok(Self::Fleet),
+			v => bail!("unknown deploy_kind: {v}; expected on of \"upgrade-to-fleet\", \"fleet\""),
+		}
+	}
+}
+
 impl Deploy {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		let hosts = opts.filter_skipped(config.list_hosts().await?).await?;
@@ -348,6 +367,8 @@ impl Deploy {
 			let local_host = config.local_host();
 			let opts = opts.clone();
 			let batch = batch.clone();
+			let mut deploy_kind: Option<DeployKind> =
+				opts.action_attr(&host, "deploy_kind").await?;
 
 			set.spawn_local(
 				(async move {
@@ -356,10 +377,40 @@ impl Deploy {
 						{
 							Ok(path) => path,
 							Err(e) => {
-								error!("failed to deploy host: {}", e);
+								error!("failed to build host system closure: {}", e);
 								return;
 							}
 						};
+					if deploy_kind == None {
+						let is_fleet_managed = match host.file_exists("/etc/FLEET_HOST").await {
+							Ok(v) => v,
+							Err(e) => {
+								error!("failed to query remote system kind: {}", e);
+								return;
+							},
+						};
+						if !is_fleet_managed {
+							error!(indoc::indoc!{"
+								host is not marked as managed by fleet
+								if you're not trying to lustrate/install system from scratch,
+								you should either
+									1. manually create /etc/FLEET_HOST file on the target host,
+									2. use ?deploy_kind=fleet host argument if you're upgrading from older version of fleet
+									3. use ?deploy_kind=upgrade_to_fleet if you're upgrading from plain nixos to fleet-managed nixos
+							"});
+							return;
+						}
+						deploy_kind = Some(DeployKind::Fleet);
+					}
+					let deploy_kind = deploy_kind.expect("deploy_kind is set");
+
+					// TODO: Make disable_rollback a host attribute instead
+					let mut disable_rollback = self.disable_rollback;
+					if !disable_rollback && deploy_kind != DeployKind::Fleet {
+						warn!("disabling rollback, as not supported by non-fleet deployment kinds");
+						disable_rollback = true;
+					}
+
 					if !opts.is_local(&hostname) {
 						info!("uploading system closure");
 						{
@@ -411,7 +462,7 @@ impl Deploy {
 							error!("unreachable? failed to get specialization");
 							return;
 						},
-						self.disable_rollback,
+						disable_rollback,
 					)
 					.await
 					{
