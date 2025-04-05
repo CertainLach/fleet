@@ -58,10 +58,34 @@ pub enum EscalationStrategy {
 	Su,
 }
 
+#[derive(Clone, PartialEq, Copy)]
+pub enum DeployKind {
+	/// NixOS => NixOS managed by fleet
+	UpgradeToFleet,
+	/// NixOS managed by fleet => NixOS managed by fleet
+	Fleet,
+	/// Remote host has /mnt, /mnt/boot mounted,
+	/// generated config is added to fleet configuration.
+	NixosInstall,
+}
+
+impl FromStr for DeployKind {
+	type Err = anyhow::Error;
+	fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+		match s {
+			"upgrade-to-fleet" => Ok(Self::UpgradeToFleet),
+			"fleet" => Ok(Self::Fleet),
+			"nixos-install" => Ok(Self::NixosInstall),
+			v => bail!("unknown deploy_kind: {v}; expected on of \"upgrade-to-fleet\", \"fleet\", \"nixos-install\""),
+		}
+	}
+}
 pub struct ConfigHost {
 	config: Config,
 	pub name: String,
 	groups: OnceCell<Vec<String>>,
+
+	deploy_kind: OnceCell<DeployKind>,
 
 	pub host_config: Option<Value>,
 	pub nixos_config: OnceCell<Value>,
@@ -73,6 +97,40 @@ pub struct ConfigHost {
 }
 // TODO: Move command helpers away with connectivity refactor
 impl ConfigHost {
+	pub fn set_deploy_kind(&self, kind: DeployKind) {
+		self.deploy_kind
+			.set(kind)
+			.ok()
+			.expect("deploy kind is already set");
+	}
+	pub async fn deploy_kind(&self) -> Result<DeployKind> {
+		if let Some(kind) = self.deploy_kind.get() {
+			return Ok(kind.clone());
+		}
+		let is_fleet_managed = match self.file_exists("/etc/FLEET_HOST").await {
+			Ok(v) => v,
+			Err(e) => {
+				bail!("failed to query remote system kind: {}", e);
+			}
+		};
+		if !is_fleet_managed {
+			bail!(indoc::indoc! {"
+				host is not marked as managed by fleet
+				if you're not trying to lustrate/install system from scratch,
+				you should either
+					1. manually create /etc/FLEET_HOST file on the target host,
+					2. use ?deploy_kind=fleet host argument if you're upgrading from older version of fleet
+					3. use ?deploy_kind=upgrade_to_fleet if you're upgrading from plain nixos to fleet-managed nixos
+			"});
+		}
+		// TOCTOU is possible
+		let _ = self.deploy_kind.set(DeployKind::Fleet);
+		Ok(self
+			.deploy_kind
+			.get()
+			.expect("deploy kind is just set")
+			.clone())
+	}
 	pub async fn escalation_strategy(&self) -> Result<EscalationStrategy> {
 		// Prefer sudo, as run0 has some gotchas with polkit
 		// and too many repeating prompts.
@@ -189,6 +247,16 @@ impl ConfigHost {
 			Ok(MyCommand::new_on(escalation, cmd, session))
 		}
 	}
+	pub async fn nix_cmd(&self) -> Result<MyCommand> {
+		let mut nix = self.cmd("nix").await?;
+		nix.args([
+			"--extra-experimental-features",
+			"nix-command",
+			"--extra-experimental-features",
+			"flakes",
+		]);
+		Ok(nix)
+	}
 
 	pub async fn decrypt(&self, data: SecretData) -> Result<Vec<u8>> {
 		ensure!(data.encrypted, "secret is not encrypted");
@@ -231,10 +299,23 @@ impl ConfigHost {
 			EscalationStrategy::Su,
 			"nix",
 		);
-		nix.arg("copy")
-			.arg("--substitute-on-destination")
-			.comparg("--to", format!("ssh-ng://{}", self.name))
-			.arg(path);
+		nix.arg("copy").arg("--substitute-on-destination");
+
+		match self.deploy_kind().await? {
+			DeployKind::Fleet | DeployKind::UpgradeToFleet => {
+				nix.comparg("--to", format!("ssh-ng://{}", self.name));
+			}
+			DeployKind::NixosInstall => {
+				nix
+					// Signature checking makes no sense with remote-store store argument set, as we're not even interacting with remote nix daemon
+					.arg("--no-check-sigs")
+					.comparg(
+						"--to",
+						format!("ssh-ng://root@{}-install?remote-store=/mnt", self.name),
+					);
+			}
+		}
+		nix.arg(path);
 		nix.run_nix().await.context("nix copy")?;
 		Ok(path.to_owned())
 	}
@@ -354,6 +435,7 @@ impl Config {
 
 			local: true,
 			session: OnceLock::new(),
+			deploy_kind: OnceCell::new(),
 		}
 	}
 
@@ -372,6 +454,7 @@ impl Config {
 			// TODO: Remove with connectivit refactor
 			local: self.localhost == name,
 			session: OnceLock::new(),
+			deploy_kind: OnceCell::new(),
 		})
 	}
 	pub async fn list_hosts(&self) -> Result<Vec<ConfigHost>> {

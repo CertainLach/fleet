@@ -1,9 +1,9 @@
-use std::{env::current_dir, os::unix::fs::symlink, path::PathBuf, str::FromStr, time::Duration};
+use std::{env::current_dir, os::unix::fs::symlink, path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, bail, Result};
 use clap::{Parser, ValueEnum};
 use fleet_base::{
-	host::{Config, ConfigHost},
+	host::{Config, ConfigHost, DeployKind},
 	opts::FleetOpts,
 };
 use itertools::Itertools as _;
@@ -131,6 +131,13 @@ async fn deploy_task(
 	specialisation: Option<String>,
 	disable_rollback: bool,
 ) -> Result<()> {
+	let deploy_kind = host.deploy_kind().await?;
+	if deploy_kind == DeployKind::NixosInstall
+		&& !matches!(action, DeployAction::Boot | DeployAction::Upload)
+	{
+		bail!("nixos-install deploy kind only supports boot and upload actions");
+	}
+
 	let mut failed = false;
 
 	// TODO: Lockfile, to prevent concurrent system switch?
@@ -177,39 +184,74 @@ async fn deploy_task(
 			}
 		}
 	}
-
-	if action.should_switch_profile() && !failed {
-		info!("switching system profile generation");
-		// It would also be possible to update profile atomically during copy:
-		// https://github.com/NixOS/nix/pull/11657
-		let mut cmd = host.cmd("nix").await?;
-		cmd.arg("build");
-		cmd.comparg("--profile", "/nix/var/nix/profiles/system");
-		cmd.arg(&built);
-		if let Err(e) = cmd.sudo().run_nix().await {
-			error!("failed to switch system profile generation: {e}");
+	if deploy_kind == DeployKind::NixosInstall {
+		info!(
+			"running nixos-install to switch profile, install bootloader, and perform activation"
+		);
+		let mut cmd = host.cmd("nixos-install").await?;
+		cmd.arg("--system").arg(&built).args([
+			// Channels here aren't fleet host system channels, but channels embedded in installation cd, which might be old.
+			// It is possible to copy host channels, but I would prefer non-flake nix just to be unsupported.
+			"--no-channel-copy",
+			"--root",
+			"/mnt",
+		]);
+		if let Err(e) = cmd.sudo().run().await {
+			error!("failed to execute nixos-install: {e}");
 			failed = true;
 		}
-	}
+	} else {
+		if action.should_switch_profile() && !failed {
+			info!("switching system profile generation");
 
-	// FIXME: Connection might be disconnected after activation run
+			// To avoid even more problems, using nixos-install for now.
+			// // nix build is unable to work with --store argument for some reason, and nix until 2.26 didn't support copy with --profile argument,
+			// // falling back to using nix-env command
+			// // After stable NixOS starts using 2.26 - use `nix --store /mnt copy --from /mnt --profile ...` here, and instead of nix build below.
+			// let mut cmd = host.cmd("nix-env").await?;
+			// cmd.args([
+			// 	"--store",
+			// 	"/mnt",
+			// 	"--profile",
+			// 	"/mnt/nix/var/nix/profiles/system",
+			// 	"--set",
+			// ])
+			// .arg(&built);
+			// if let Err(e) = cmd.sudo().run_nix().await {
+			// 	error!("failed to switch system profile generation: {e}");
+			// 	failed = true;
+			// }
+			// It would also be possible to update profile atomically during copy:
+			// https://github.com/NixOS/nix/pull/11657
+			let mut cmd = host.nix_cmd().await?;
+			cmd.arg("build");
+			cmd.comparg("--profile", "/nix/var/nix/profiles/system");
+			cmd.arg(&built);
+			if let Err(e) = cmd.sudo().run_nix().await {
+				error!("failed to switch system profile generation: {e}");
+				failed = true;
+			}
+		}
 
-	if action.should_activate() && !failed {
-		let _span = info_span!("activating").entered();
-		info!("executing activation script");
-		let specialised = if let Some(specialisation) = specialisation {
-			let mut specialised = built.join("specialisation");
-			specialised.push(specialisation);
-			specialised
-		} else {
-			built.clone()
-		};
-		let switch_script = specialised.join("bin/switch-to-configuration");
-		let mut cmd = host.cmd(switch_script).in_current_span().await?;
-		cmd.arg(action.name().expect("upload.should_activate == false"));
-		if let Err(e) = cmd.sudo().run().in_current_span().await {
-			error!("failed to activate: {e}");
-			failed = true;
+		// FIXME: Connection might be disconnected after activation run
+
+		if action.should_activate() && !failed {
+			let _span = info_span!("activating").entered();
+			info!("executing activation script");
+			let specialised = if let Some(specialisation) = specialisation {
+				let mut specialised = built.join("specialisation");
+				specialised.push(specialisation);
+				specialised
+			} else {
+				built.clone()
+			};
+			let switch_script = specialised.join("bin/switch-to-configuration");
+			let mut cmd = host.cmd(switch_script).in_current_span().await?;
+			cmd.arg(action.name().expect("upload.should_activate == false"));
+			if let Err(e) = cmd.sudo().run().in_current_span().await {
+				error!("failed to activate: {e}");
+				failed = true;
+			}
 		}
 	}
 	if action.should_create_rollback_marker() {
@@ -333,24 +375,6 @@ impl BuildSystems {
 	}
 }
 
-#[derive(Clone, PartialEq, Copy)]
-enum DeployKind {
-	// NixOS => NixOS managed by fleet
-	UpgradeToFleet,
-	// NixOS managed by fleet => NixOS managed by fleet
-	Fleet,
-}
-impl FromStr for DeployKind {
-	type Err = anyhow::Error;
-	fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-		match s {
-			"upgrade-to-fleet" => Ok(Self::UpgradeToFleet),
-			"fleet" => Ok(Self::Fleet),
-			v => bail!("unknown deploy_kind: {v}; expected on of \"upgrade-to-fleet\", \"fleet\""),
-		}
-	}
-}
-
 impl Deploy {
 	pub async fn run(self, config: &Config, opts: &FleetOpts) -> Result<()> {
 		let hosts = opts.filter_skipped(config.list_hosts().await?).await?;
@@ -367,8 +391,9 @@ impl Deploy {
 			let local_host = config.local_host();
 			let opts = opts.clone();
 			let batch = batch.clone();
-			let mut deploy_kind: Option<DeployKind> =
-				opts.action_attr(&host, "deploy_kind").await?;
+			if let Some(deploy_kind) = opts.action_attr::<DeployKind>(&host, "deploy_kind").await? {
+				host.set_deploy_kind(deploy_kind);
+			};
 
 			set.spawn_local(
 				(async move {
@@ -381,28 +406,14 @@ impl Deploy {
 								return;
 							}
 						};
-					if deploy_kind == None {
-						let is_fleet_managed = match host.file_exists("/etc/FLEET_HOST").await {
-							Ok(v) => v,
-							Err(e) => {
-								error!("failed to query remote system kind: {}", e);
-								return;
-							},
-						};
-						if !is_fleet_managed {
-							error!(indoc::indoc!{"
-								host is not marked as managed by fleet
-								if you're not trying to lustrate/install system from scratch,
-								you should either
-									1. manually create /etc/FLEET_HOST file on the target host,
-									2. use ?deploy_kind=fleet host argument if you're upgrading from older version of fleet
-									3. use ?deploy_kind=upgrade_to_fleet if you're upgrading from plain nixos to fleet-managed nixos
-							"});
+
+					let deploy_kind = match host.deploy_kind().await {
+						Ok(v) => v,
+						Err(e) => {
+							error!("failed to query target deploy kind: {e}");
 							return;
 						}
-						deploy_kind = Some(DeployKind::Fleet);
-					}
-					let deploy_kind = deploy_kind.expect("deploy_kind is set");
+					};
 
 					// TODO: Make disable_rollback a host attribute instead
 					let mut disable_rollback = self.disable_rollback;

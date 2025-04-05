@@ -13,6 +13,7 @@ clap = { workspace = true, features = ["derive"] }
 fleet-shared.workspace = true
 futures = "0.3.30"
 hostname = "0.4.0"
+indoc = "2.0.6"
 itertools = "0.13.0"
 nix-eval.workspace = true
 nixlike.workspace = true
