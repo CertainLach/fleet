@@ -17,7 +17,7 @@ use clap::Parser;
 use fleet_shared::SecretData;
 use nix::unistd::{chown, Group, User};
 use serde::Deserialize;
-use tracing::{error, info_span};
+use tracing::{error, info, info_span};
 use tracing_subscriber::{filter::LevelFilter, EnvFilter};
 
 #[derive(Parser)]
@@ -196,6 +196,11 @@ fn install(data: &Path) -> anyhow::Result<()> {
 		.unwrap_or(false)
 	{
 		fs::create_dir("/run/secrets").context("failed to create secrets directory")?;
+	}
+
+	if data.is_empty() {
+		info!("no secrets to install");
+		return Ok(())
 	}
 
 	let identity = host_identity()?;
