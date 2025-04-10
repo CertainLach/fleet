@@ -247,7 +247,8 @@ async fn deploy_task(
 			};
 			let switch_script = specialised.join("bin/switch-to-configuration");
 			let mut cmd = host.cmd(switch_script).in_current_span().await?;
-			cmd.arg(action.name().expect("upload.should_activate == false"));
+			cmd.env("FLEET_ONLINE_ACTIVATION", "1")
+				.arg(action.name().expect("upload.should_activate == false"));
 			if let Err(e) = cmd.sudo().run().in_current_span().await {
 				error!("failed to activate: {e}");
 				failed = true;
