@@ -9,7 +9,7 @@
 }: let
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.options) mkOption;
-  inherit (lib.types) deferredModule;
+  inherit (lib.types) deferredModule unspecified;
   inherit (lib.modules) mkRemovedOptionModule;
   inherit (lib.strings) escapeNixIdentifier;
   inherit (fleetLib.options) mkHostsOption;
@@ -54,6 +54,9 @@ in {
               };
             };
         };
+        nixos_unchecked = mkOption {
+          type = unspecified;
+        };
       };
       config = {
         # imports = [
@@ -61,10 +64,17 @@ in {
         # ];
         nixos = {
           config._module.args = {
-            nixosHosts = mapAttrs (_: value: value.nixos.config) config.hosts;
+            nixosHosts = mapAttrs (_: value: value.nixos_unchecked.config) config.hosts;
             hosts = config.hosts;
             host = hostArgs.config;
           };
+        };
+        nixos_unchecked = hostArgs.config.nixos.extendModules {
+          modules = [
+            {
+              _module.check = false;
+            }
+          ];
         };
       };
     });

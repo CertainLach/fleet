@@ -97,6 +97,7 @@ pub struct ConfigHost {
 
 	pub host_config: Option<Value>,
 	pub nixos_config: OnceCell<Value>,
+	pub nixos_unchecked_config: OnceCell<Value>,
 	pub pkgs_override: Option<Value>,
 
 	// TODO: Move command helpers away with connectivity refactor
@@ -377,9 +378,22 @@ impl ConfigHost {
 
 		Ok(nixos_config)
 	}
+	pub async fn nixos_unchecked_config(&self) -> Result<Value> {
+		if let Some(v) = self.nixos_unchecked_config.get() {
+			return Ok(v.clone());
+		}
+		let Some(host_config) = &self.host_config else {
+			bail!("local host has no nixos_config");
+		};
+		let nixos_config = nix_go!(host_config.nixos_unchecked.config);
+
+		let _ = self.nixos_unchecked_config.set(nixos_config.clone());
+
+		Ok(nixos_config)
+	}
 
 	pub async fn list_configured_secrets(&self) -> Result<Vec<String>> {
-		let nixos = self.nixos_config().await?;
+		let nixos = self.nixos_unchecked_config().await?;
 		let secrets = nix_go!(nixos.secrets);
 		let mut out = Vec::new();
 		for name in secrets.list_fields().await? {
@@ -393,7 +407,7 @@ impl ConfigHost {
 		Ok(out)
 	}
 	pub async fn secret_field(&self, name: &str) -> Result<Value> {
-		let nixos = self.nixos_config().await?;
+		let nixos = self.nixos_unchecked_config().await?;
 		Ok(nix_go!(nixos.secrets[{ name }]))
 	}
 
@@ -434,6 +448,7 @@ impl Config {
 			name: "<virtual localhost>".to_owned(),
 			host_config: None,
 			nixos_config: OnceCell::new(),
+			nixos_unchecked_config: OnceCell::new(),
 			groups: {
 				let cell = OnceCell::new();
 				let _ = cell.set(vec![]);
@@ -456,6 +471,7 @@ impl Config {
 			name: name.to_owned(),
 			host_config: Some(host_config),
 			nixos_config: OnceCell::new(),
+			nixos_unchecked_config: OnceCell::new(),
 			groups: OnceCell::new(),
 			pkgs_override: None,
 
