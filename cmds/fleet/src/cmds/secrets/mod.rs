@@ -844,13 +844,13 @@ impl Secret {
 					info!("updating secret: {name}");
 					let data = config.shared_secret(name)?;
 					let config_field = &config.config_field;
-					let expected_owners: Vec<String> =
+					let expected_owners: Option<Vec<String>> =
 						nix_go_json!(config_field.sharedSecrets[{ name }].expectedOwners);
-					if expected_owners.is_empty() {
+					let Some(expected_owners) = expected_owners else {
 						warn!("secret was removed from fleet config: {name}, removing from data");
 						to_remove.push(name.to_string());
 						continue;
-					}
+					};
 
 					let secret = nix_go!(config_field.sharedSecrets[{ name }]);
 					let expected_generation_data = nix_go_json!(secret.expectedGenerationData);
