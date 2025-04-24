@@ -162,7 +162,7 @@ fn setup_logging() {
 			.without_time()
 			.with_target(false);
 		#[cfg(feature = "indicatif")]
-		let sub = sub.with_writer(indicatif_layer.get_stdout_writer());
+		let sub = sub.with_writer(indicatif_layer.get_stderr_writer());
 		sub.with_filter(filter) // .without,
 	});
 	// #[cfg(feature = "indicatif")]
