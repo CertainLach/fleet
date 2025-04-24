@@ -1,6 +1,6 @@
 use std::{env::current_dir, os::unix::fs::symlink, path::PathBuf, time::Duration};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, ValueEnum};
 use fleet_base::{
 	host::{Config, ConfigHost, DeployKind},
@@ -132,10 +132,10 @@ async fn deploy_task(
 	disable_rollback: bool,
 ) -> Result<()> {
 	let deploy_kind = host.deploy_kind().await?;
-	if deploy_kind == DeployKind::NixosInstall
+	if (deploy_kind == DeployKind::NixosInstall || deploy_kind == DeployKind::NixosLustrate)
 		&& !matches!(action, DeployAction::Boot | DeployAction::Upload)
 	{
-		bail!("nixos-install deploy kind only supports boot and upload actions");
+		bail!("{deploy_kind:?} deploy kind only supports boot and upload actions");
 	}
 
 	let mut failed = false;
@@ -183,6 +183,17 @@ async fn deploy_task(
 				failed = true;
 			}
 		}
+	}
+	if deploy_kind == DeployKind::NixosLustrate {
+		// Fleet could also create this file, but as this operation is potentially disruptive,
+		// make user do it themself.
+		if !host.file_exists("/etc/NIXOS_LUSTRATE").await? {
+			bail!("/etc/NIXOS_LUSTRATE should be created on remote host");
+		}
+		// Wanted by NixOS to recognize the system as NixOS.
+		let mut cmd = host.cmd("touch").await?;
+		cmd.arg("/etc/NIXOS");
+		cmd.sudo().run().await.context("creating /etc/NIXOS")?;
 	}
 	if deploy_kind == DeployKind::NixosInstall {
 		info!(
@@ -247,6 +258,9 @@ async fn deploy_task(
 			};
 			let switch_script = specialised.join("bin/switch-to-configuration");
 			let mut cmd = host.cmd(switch_script).in_current_span().await?;
+			if deploy_kind == DeployKind::NixosLustrate {
+				cmd.env("NIXOS_INSTALL_BOOTLOADER", "1");
+			}
 			cmd.env("FLEET_ONLINE_ACTIVATION", "1")
 				.arg(action.name().expect("upload.should_activate == false"));
 			if let Err(e) = cmd.sudo().run().in_current_span().await {

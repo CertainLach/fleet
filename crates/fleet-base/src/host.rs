@@ -23,8 +23,10 @@ use crate::{
 };
 
 pub struct FleetConfigInternals {
-	pub local_system: String,
+	/// Fleet project directory, containing fleet.nix file.
 	pub directory: PathBuf,
+	/// builtins.currentSystem
+	pub local_system: String,
 	pub data: Mutex<FleetData>,
 	pub nix_args: Vec<OsString>,
 	/// fleet_config.config
@@ -34,6 +36,7 @@ pub struct FleetConfigInternals {
 
 	/// import nixpkgs {system = local};
 	pub default_pkgs: Value,
+	/// inputs.nixpkgs
 	pub nixpkgs: Value,
 
 	pub nix_session: NixSession,
@@ -58,7 +61,7 @@ pub enum EscalationStrategy {
 	Su,
 }
 
-#[derive(Clone, PartialEq, Copy)]
+#[derive(Clone, PartialEq, Copy, Debug)]
 pub enum DeployKind {
 	/// NixOS => NixOS managed by fleet
 	UpgradeToFleet,
@@ -67,6 +70,10 @@ pub enum DeployKind {
 	/// Remote host has /mnt, /mnt/boot mounted,
 	/// generated config is added to fleet configuration.
 	NixosInstall,
+	/// Remote host has some system and nix installed in multi-user mode (/nix is owned by root),
+	/// generated config is added to fleet configuration,
+	/// and /etc/NIXOS_LUSTRATE exists, fleet will perform the rest.
+	NixosLustrate,
 }
 
 impl FromStr for DeployKind {
@@ -302,7 +309,7 @@ impl ConfigHost {
 		nix.arg("copy").arg("--substitute-on-destination");
 
 		match self.deploy_kind().await? {
-			DeployKind::Fleet | DeployKind::UpgradeToFleet => {
+			DeployKind::Fleet | DeployKind::UpgradeToFleet | DeployKind::NixosLustrate => {
 				nix.comparg("--to", format!("ssh-ng://{}", self.name));
 			}
 			DeployKind::NixosInstall => {

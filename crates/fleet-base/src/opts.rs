@@ -6,7 +6,7 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use nix_eval::{nix_go, util::assert_warn, NixSessionPool, Value};
 use nom::{
@@ -182,7 +182,23 @@ impl FleetOpts {
 
 	// TODO: Config should be detached from opts.
 	pub async fn build(&self, nix_args: Vec<OsString>, assert: bool) -> Result<Config> {
-		let directory = current_dir()?;
+		let cwd = current_dir()?;
+		let mut directory = cwd.clone();
+		let mut fleet_data_path = directory.join("fleet.nix");
+		while !fleet_data_path.is_file() {
+			// fleet.nix
+			fleet_data_path.pop();
+			if !directory.pop() || !fleet_data_path.pop() {
+				bail!(
+					"fleet.nix not found at {} or any of the parent directories",
+					cwd.display()
+				);
+			}
+			fleet_data_path.push("fleet.nix");
+		}
+		let bytes =
+			std::fs::read_to_string(&fleet_data_path).context("reading fleet state (fleet.nix)")?;
+		let data: Mutex<FleetData> = nixlike::parse_str(&bytes)?;
 
 		let pool = NixSessionPool::new(
 			directory.as_os_str().to_owned(),
@@ -193,12 +209,6 @@ impl FleetOpts {
 		let nix_session = pool.get().await?;
 
 		let builtins_field = Value::binding(nix_session.clone(), "builtins").await?;
-
-		let mut fleet_data_path = directory.clone();
-		fleet_data_path.push("fleet.nix");
-		let bytes =
-			std::fs::read_to_string(fleet_data_path).context("reading fleet state (fleet.nix)")?;
-		let data: Mutex<FleetData> = nixlike::parse_str(&bytes)?;
 
 		let fleet_root = Value::binding(nix_session.clone(), "fleetConfigurations").await?;
 		let fleet_field = nix_go!(fleet_root.default({ data }));
