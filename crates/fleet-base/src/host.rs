@@ -83,7 +83,8 @@ impl FromStr for DeployKind {
 			"upgrade-to-fleet" => Ok(Self::UpgradeToFleet),
 			"fleet" => Ok(Self::Fleet),
 			"nixos-install" => Ok(Self::NixosInstall),
-			v => bail!("unknown deploy_kind: {v}; expected on of \"upgrade-to-fleet\", \"fleet\", \"nixos-install\""),
+			"nixos-lustrate" => Ok(Self::NixosLustrate),
+			v => bail!("unknown deploy_kind: {v}; expected on of \"upgrade-to-fleet\", \"fleet\", \"nixos-install\", \"nixos-lustrate\""),
 		}
 	}
 }
