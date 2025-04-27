@@ -1,4 +1,4 @@
-{craneLib}:
+{ craneLib }:
 craneLib.buildPackage rec {
   pname = "fleet-install-secrets";
 

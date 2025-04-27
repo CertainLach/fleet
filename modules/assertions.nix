@@ -2,7 +2,8 @@
   lib,
   config,
   ...
-}: let
+}:
+let
   inherit (lib.options) mkOption;
   inherit (lib.types) listOf unspecified str;
   inherit (lib.lists) map filter;
@@ -14,12 +15,13 @@
       Similar to warnings, however build will fail if any error exists.
     '';
   };
-in {
+in
+{
   options = {
     assertions = mkOption {
       type = listOf unspecified;
       internal = true;
-      default = [];
+      default = [ ];
       example = [
         {
           assertion = false;
@@ -35,9 +37,9 @@ in {
 
     warnings = mkOption {
       internal = true;
-      default = [];
+      default = [ ];
       type = listOf str;
-      example = ["The `foo' service is deprecated and will go away soon!"];
+      example = [ "The `foo' service is deprecated and will go away soon!" ];
       description = ''
         This option allows modules to show warnings to users during
         the evaluation of the system configuration.
@@ -47,18 +49,16 @@ in {
     inherit errors;
   };
   config = {
-    errors =
-      map (v: v.message)
-      (filter (v: !v.assertion) config.assertions);
+    errors = map (v: v.message) (filter (v: !v.assertion) config.assertions);
 
-    nixos = {config, ...}: {
-      _file = ./assertions.nix;
-      options = {
-        inherit errors;
+    nixos =
+      { config, ... }:
+      {
+        _file = ./assertions.nix;
+        options = {
+          inherit errors;
+        };
+        config.errors = map (v: v.message) (filter (v: !v.assertion) config.assertions);
       };
-      config.errors =
-        map (v: v.message)
-        (filter (v: !v.assertion) config.assertions);
-    };
   };
 }

@@ -3,7 +3,8 @@
   fleetLib,
   config,
   ...
-}: let
+}:
+let
   inherit (lib.options) mkOption literalExpression;
   inherit (lib.types) path;
   inherit (lib.modules) mkRemovedOptionModule;
@@ -11,7 +12,8 @@
   inherit (fleetLib.types) listOfOverlay;
 
   _file = ./nixpkgs.lib;
-in {
+in
+{
   options = {
     nixpkgs = {
       buildUsing = mkOption {
@@ -48,7 +50,10 @@ in {
         inherit _file;
         nixpkgs.overlays = config.nixpkgs.overlays;
         imports = [
-          (mkRemovedOptionModule ["nixpkgs" "buildUsing"] "this option should be specified at the host level, not the nixosModules level")
+          (mkRemovedOptionModule [
+            "nixpkgs"
+            "buildUsing"
+          ] "this option should be specified at the host level, not the nixosModules level")
         ];
       };
     };

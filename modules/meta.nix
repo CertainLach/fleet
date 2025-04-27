@@ -1,7 +1,9 @@
-{lib, ...}: let
+{ lib, ... }:
+let
   inherit (lib.modules) mkRemovedOptionModule;
-in {
+in
+{
   imports = [
-    (mkRemovedOptionModule ["fleetModules"] "replaced with imports.")
+    (mkRemovedOptionModule [ "fleetModules" ] "replaced with imports.")
   ];
 }

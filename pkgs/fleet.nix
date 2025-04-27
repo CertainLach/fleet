@@ -10,7 +10,7 @@ craneLib.buildPackage rec {
 
   cargoExtraArgs = "--locked -p ${pname}";
 
-  nativeBuildInputs = [installShellFiles];
+  nativeBuildInputs = [ installShellFiles ];
 
   postInstall = ''
     for shell in bash fish zsh; do

@@ -1,5 +1,6 @@
 # Tied to build_systems.rs
-{config, ...}: {
+{ config, ... }:
+{
   # TODO: Make it work with systemd-initrd approach.
   # In this case we can't just switch generation and re-run activation script, since the root filesystem might not be
   # mounted yet. We need to explicitly remove the last generation, and this needs deeper integration with systemd/grub/
@@ -36,7 +37,7 @@
 
   systemd.timers.rollback-watchdog = {
     description = "Timer for rollback watchdog";
-    wantedBy = ["timers.target"];
+    wantedBy = [ "timers.target" ];
     timerConfig = {
       OnActiveSec = "3min";
       RemainAfterElapse = false;

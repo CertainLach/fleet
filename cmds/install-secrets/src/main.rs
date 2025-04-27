@@ -200,7 +200,7 @@ fn install(data: &Path) -> anyhow::Result<()> {
 
 	if data.is_empty() {
 		info!("no secrets to install");
-		return Ok(())
+		return Ok(());
 	}
 
 	let identity = host_identity()?;

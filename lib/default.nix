@@ -1,11 +1,18 @@
 # Shared functions for fleet configuration, available as `fleet` module argument
-{lib}: let
+{ lib }:
+let
   inherit (lib.trivial) isFunction;
   inherit (lib.options) mkOption mergeOneOption;
   inherit (lib.modules) mkOverride;
-  inherit (lib.types) listOf submodule attrsOf mkOptionType;
+  inherit (lib.types)
+    listOf
+    submodule
+    attrsOf
+    mkOptionType
+    ;
   inherit (lib.strings) optionalString hasPrefix removePrefix;
-in rec {
+in
+rec {
   types = {
     overlay = mkOptionType {
       name = "nixpkgs-overlay";
@@ -20,11 +27,13 @@ in rec {
   };
 
   options = {
-    mkHostsOption = module:
+    mkHostsOption =
+      module:
       mkOption {
         type = types.mkHostsType module;
       };
-    mkDataOption = module:
+    mkDataOption =
+      module:
       mkOption {
         type = types.mkDataType module;
       };
@@ -57,10 +66,14 @@ in rec {
       Output:
         Resulting secret has only part: secret, which contains encrypted password.
     */
-    mkPassword = {size ? 32}: {
-      coreutils,
-      mkSecretGenerator,
-    }:
+    mkPassword =
+      {
+        size ? 32,
+      }:
+      {
+        coreutils,
+        mkSecretGenerator,
+      }:
       mkSecretGenerator {
         script = ''
           mkdir $out
@@ -81,10 +94,12 @@ in rec {
 
       This secret format is used by e.g Garage S3 server
     */
-    mkEd25519 = {
-      noEmbedPublic ? false,
-      encoding ? null,
-    }: {mkSecretGenerator}:
+    mkEd25519 =
+      {
+        noEmbedPublic ? false,
+        encoding ? null,
+      }:
+      { mkSecretGenerator }:
       mkSecretGenerator {
         script = ''
           mkdir $out
@@ -105,7 +120,11 @@ in rec {
 
       This secret format is used by e.g Wireguard VPN for peers (base64-encoded)
     */
-    mkX25519 = {encoding ? null}: {mkSecretGenerator}:
+    mkX25519 =
+      {
+        encoding ? null,
+      }:
+      { mkSecretGenerator }:
       mkSecretGenerator {
         script = ''
           mkdir $out
@@ -124,10 +143,14 @@ in rec {
         Resulting secret has two parts: public and secret, where the secret part is encrypted.
         Both parts are PEM encoded.
     */
-    mkRsa = {size ? 4096}: {
-      openssl,
-      mkSecretGenerator,
-    }:
+    mkRsa =
+      {
+        size ? 4096,
+      }:
+      {
+        openssl,
+        mkSecretGenerator,
+      }:
       mkSecretGenerator {
         script = ''
           mkdir $out
@@ -154,11 +177,13 @@ in rec {
 
       Might be used for e.g. Wireguard VPN PSK keys (base64-encoded)
     */
-    mkBytes = {
-      count ? 32,
-      encoding,
-      noNuls ? false,
-    }: {mkSecretGenerator}:
+    mkBytes =
+      {
+        count ? 32,
+        encoding,
+        noNuls ? false,
+      }:
+      { mkSecretGenerator }:
       mkSecretGenerator {
         script = ''
           mkdir $out
@@ -169,7 +194,10 @@ in rec {
     /**
       Shorthand for `mkBytes`, which defaults to "hex" encoding
     */
-    mkHexBytes = {count ? 32}:
+    mkHexBytes =
+      {
+        count ? 32,
+      }:
       mkBytes {
         inherit count;
         encoding = "hex";
@@ -177,7 +205,10 @@ in rec {
     /**
       Shorthand for `mkBytes`, which defaults to "base64" encoding
     */
-    mkBase64Bytes = {count ? 32}:
+    mkBase64Bytes =
+      {
+        count ? 32,
+      }:
       mkBytes {
         inherit count;
         encoding = "base64";
@@ -188,22 +219,34 @@ in rec {
     # mkWireguardPsk = {}: mkBase64Bytes {count = 32;};
   };
 
-  inherit (secrets) mkPassword mkEd25519 mkX25519 mkRsa mkBytes mkHexBytes mkBase64Bytes;
+  inherit (secrets)
+    mkPassword
+    mkEd25519
+    mkX25519
+    mkRsa
+    mkBytes
+    mkHexBytes
+    mkBase64Bytes
+    ;
 
-  strings = let
-    plaintextPrefix = "<PLAINTEXT>";
-    plaintextNewlinePrefix = "<PLAINTEXT-NL>";
-  in {
-    /**
-      Decode public secret part into string
-    */
-    decodeRawSecret = raw:
-      if hasPrefix plaintextPrefix raw
-      then removePrefix plaintextPrefix raw
-      else if hasPrefix plaintextNewlinePrefix raw
-      then removePrefix plaintextNewlinePrefix raw
-      else throw "decodeRawSecret only works with plaintext-encoded secret public parts, got ${raw}";
-  };
+  strings =
+    let
+      plaintextPrefix = "<PLAINTEXT>";
+      plaintextNewlinePrefix = "<PLAINTEXT-NL>";
+    in
+    {
+      /**
+        Decode public secret part into string
+      */
+      decodeRawSecret =
+        raw:
+        if hasPrefix plaintextPrefix raw then
+          removePrefix plaintextPrefix raw
+        else if hasPrefix plaintextNewlinePrefix raw then
+          removePrefix plaintextNewlinePrefix raw
+        else
+          throw "decodeRawSecret only works with plaintext-encoded secret public parts, got ${raw}";
+    };
 
   inherit (strings) decodeRawSecret;
 }

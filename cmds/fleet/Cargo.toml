@@ -32,8 +32,8 @@ itertools = "0.13"
 shlex = "1.3"
 tabled = { version = "0.16" }
 owo-colors = { version = "4.0", features = [
-	"supports-color",
-	"supports-colors",
+  "supports-color",
+  "supports-colors",
 ] }
 abort-on-drop = "0.2"
 regex = "1.10"
@@ -52,8 +52,8 @@ fleet-base = { version = "0.1.0", path = "../../crates/fleet-base" }
 default = ["indicatif"]
 # Not quite stable
 indicatif = [
-	"dep:tracing-indicatif",
-	"dep:indicatif",
-	"dep:human-repr",
-	"better-command/indicatif",
+  "dep:tracing-indicatif",
+  "dep:indicatif",
+  "dep:human-repr",
+  "better-command/indicatif",
 ]

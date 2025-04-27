@@ -1,5 +1,5 @@
 {
-  description = "NixOS configuration management";
+  description = "NixOS cluster configuration management";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/release-24.11";
@@ -13,6 +13,10 @@
     };
     crane.url = "github:ipetkov/crane";
     shelly.url = "github:CertainLach/shelly";
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
   outputs =
     inputs:
@@ -75,6 +79,7 @@
             config,
             system,
             pkgs,
+            self,
             ...
           }:
           let
@@ -92,6 +97,7 @@
             lib = pkgs.lib;
             rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
             craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rust;
+            treefmt = (inputs.treefmt-nix.lib.evalModule pkgs ./treefmt.nix).config.build;
           in
           {
             _module.args.pkgs = import inputs.nixpkgs {
@@ -128,7 +134,10 @@
               # with rust in nixpkgs.
               (prefixAttrs "nixpkgs-" {
                 inherit (packages) fleet-install-secrets;
-              });
+              })
+              // {
+                checks.formatting = treefmt.check self;
+              };
             # TODO: It should be possible to move lib.mkIf to default attribute, instead of disabling the whole
             # devShells block, yet nix flake check fails here, due to no default shell found. It is nix or flake-parts bug?
             shelly.shells.default = lib.mkIf deployerSystem {
@@ -151,7 +160,7 @@
               ];
               environment.PROTOC = "${pkgs.protobuf}/bin/protoc";
             };
-            formatter = pkgs.alejandra;
+            formatter = treefmt.wrapper;
           };
       };
 }

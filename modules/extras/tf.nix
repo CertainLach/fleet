@@ -4,15 +4,18 @@
   fleetLib,
   inputs,
   ...
-}: let
+}:
+let
   inherit (lib.options) mkOption;
   inherit (lib.types) deferredModule attrsOf unspecified;
   inherit (fleetLib.options) mkDataOption;
-in {
+in
+{
   options = {
     tf = mkOption {
       type = deferredModule;
-      apply = module: system:
+      apply =
+        module: system:
         inputs.terranix.lib.terranixConfiguration {
           inherit system;
           pkgs = config.nixpkgs.buildUsing.legacyPackages.${system};
@@ -24,7 +27,7 @@ in {
     data = mkDataOption {
       # host => hostData
       options.extra.terraformHosts = mkOption {
-        default = {};
+        default = { };
         type = attrsOf (attrsOf unspecified);
         description = "Hosts data provided by fleet tf";
       };

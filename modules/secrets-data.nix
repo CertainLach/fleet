@@ -3,11 +3,25 @@
   fleetLib,
   config,
   ...
-}: let
+}:
+let
   inherit (fleetLib.options) mkDataOption;
   inherit (lib.options) mkOption;
-  inherit (lib.types) nullOr listOf str attrsOf submodule bool unspecified;
-  inherit (lib.attrsets) mapAttrsToList mapAttrs filterAttrs genAttrs;
+  inherit (lib.types)
+    nullOr
+    listOf
+    str
+    attrsOf
+    submodule
+    bool
+    unspecified
+    ;
+  inherit (lib.attrsets)
+    mapAttrsToList
+    mapAttrs
+    filterAttrs
+    genAttrs
+    ;
   inherit (lib.lists) sort unique concatLists;
   inherit (lib.strings) toJSON;
 
@@ -43,7 +57,7 @@
           If owners differ from expected owners, the secret is considered outdated
           and requires regeneration or re-encryption.
         '';
-        default = [];
+        default = [ ];
       };
       generationData = mkOption {
         type = unspecified;
@@ -51,7 +65,7 @@
         default = null;
       };
     };
-    config = {};
+    config = { };
   };
 
   hostSecretData = {
@@ -78,46 +92,56 @@
         default = null;
       };
     };
-    config = {};
+    config = { };
   };
-in {
-  options.data = mkDataOption ({config, ...}: {
-    options = {
-      sharedSecrets = mkOption {
-        type = attrsOf (submodule sharedSecretData);
-        default = {};
-        description = "Shared secret data.";
+in
+{
+  options.data = mkDataOption (
+    { config, ... }:
+    {
+      options = {
+        sharedSecrets = mkOption {
+          type = attrsOf (submodule sharedSecretData);
+          default = { };
+          description = "Shared secret data.";
+        };
+        hostSecrets = mkOption {
+          type = attrsOf (attrsOf (submodule hostSecretData));
+          default = { };
+          description = "Host-specific secrets.";
+          internal = true;
+        };
       };
-      hostSecrets = mkOption {
-        type = attrsOf (attrsOf (submodule hostSecretData));
-        default = {};
-        description = "Host-specific secrets.";
-        internal = true;
-      };
-    };
-    config.hostSecrets = let
-      hostsWithSharedSecrets = unique (concatLists (mapAttrsToList (_: s: s.owners) config.sharedSecrets));
-      secretsHavingHost = host: filterAttrs (_: secret: lib.elem host secret.owners) config.sharedSecrets;
-      toHostSecret = _: secret: (removeAttrs secret ["owners"]) // {shared = true;};
-    in
-      genAttrs hostsWithSharedSecrets (host: mapAttrs toHostSecret (secretsHavingHost host));
-  });
+      config.hostSecrets =
+        let
+          hostsWithSharedSecrets = unique (
+            concatLists (mapAttrsToList (_: s: s.owners) config.sharedSecrets)
+          );
+          secretsHavingHost = host: filterAttrs (_: secret: lib.elem host secret.owners) config.sharedSecrets;
+          toHostSecret = _: secret: (removeAttrs secret [ "owners" ]) // { shared = true; };
+        in
+        genAttrs hostsWithSharedSecrets (host: mapAttrs toHostSecret (secretsHavingHost host));
+    }
+  );
   config = {
     assertions =
-      (mapAttrsToList
-        (name: secret: {
-          assertion = secret.expectedOwners == null || sort (a: b: a < b) config.data.sharedSecrets.${name}.owners == sort (a: b: a < b) secret.expectedOwners;
-          message = "Shared secret ${name} is expected to be encrypted for ${toJSON secret.expectedOwners}, but it is encrypted for ${toJSON config.data.sharedSecrets.${name}.owners}. Run fleet secrets regenerate to fix";
-        })
-        config.sharedSecrets)
-      ++ (mapAttrsToList
-        (name: secret: {
-          # TODO: Same aassertion should be in host secrets
-          assertion = config.data.sharedSecrets.${name}.generationData == secret.expectedGenerationData;
-          message = "Shared secret ${name} has unexpected generation data ${toJSON secret.expectedGenerationData} != ${toJSON config.data.sharedSecrets.${name}.expectedGenerationData}. Run fleet secrets regenerate to fix";
-        })
-        config.sharedSecrets);
-    sharedSecrets =
-      mapAttrs (_: _: {}) config.data.sharedSecrets;
+      (mapAttrsToList (name: secret: {
+        assertion =
+          secret.expectedOwners == null
+          ||
+            sort (a: b: a < b) (config.data.sharedSecrets.${name} or { owners = [ ]; }).owners
+            == sort (a: b: a < b) secret.expectedOwners;
+        message = "Shared secret ${name} is expected to be encrypted for ${toJSON secret.expectedOwners}, but it is encrypted for ${
+          toJSON config.data.sharedSecrets.${name}.owners
+        }. Run fleet secrets regenerate to fix";
+      }) config.sharedSecrets)
+      ++ (mapAttrsToList (name: secret: {
+        # TODO: Same aassertion should be in host secrets
+        assertion = config.data.sharedSecrets.${name}.generationData == secret.expectedGenerationData;
+        message = "Shared secret ${name} has unexpected generation data ${toJSON secret.expectedGenerationData} != ${
+          toJSON config.data.sharedSecrets.${name}.expectedGenerationData
+        }. Run fleet secrets regenerate to fix";
+      }) config.sharedSecrets);
+    sharedSecrets = mapAttrs (_: _: { }) config.data.sharedSecrets;
   };
 }

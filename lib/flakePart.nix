@@ -1,20 +1,28 @@
-{crane}: {
+{ crane }:
+{
   fleetLib,
   lib,
   config,
   inputs,
   self,
   ...
-}: let
+}:
+let
   inherit (lib.options) mkOption mkEnableOption;
   inherit (lib.attrsets) mapAttrs;
-  inherit (lib.types) lazyAttrsOf deferredModule unspecified str;
+  inherit (lib.types)
+    lazyAttrsOf
+    deferredModule
+    unspecified
+    str
+    ;
   inherit (lib.strings) isPath;
   inherit (lib.modules) mkIf mkOptionDefault;
-in {
+in
+{
   options.fleetModules = mkOption {
     type = lazyAttrsOf unspecified;
-    default = {};
+    default = { };
   };
   options.fleetNixosConfigurationsCompat = {
     enable = mkEnableOption "Create nixosConfiguration output based on fleetConfiguration";
@@ -30,9 +38,11 @@ in {
   };
   options.fleetConfigurations = mkOption {
     type = lazyAttrsOf deferredModule;
-    apply = nameToModule:
+    apply =
+      nameToModule:
       mapAttrs (
-        name: module: data: let
+        name: module: data:
+        let
           # To use user-provided nixpkgs, we first need to extract wanted nixpkgs attribute,
           # to do that, evaluate all the modules with only needed option declared.
           bootstrapEval = lib.evalModules {
@@ -53,28 +63,27 @@ in {
           };
           bootstrapNixpkgs = bootstrapEval.config.nixpkgs.buildUsing;
           normalEval = bootstrapNixpkgs.lib.evalModules {
-            modules =
-              (import ../modules/module-list.nix)
-              ++ [
-                module
-                {
-                  config = {
-                    data =
-                      if isPath data
-                      then import data
-                      else data;
-                    nixpkgs.buildUsing = mkOptionDefault bootstrapNixpkgs;
-                    nixpkgs.overlays = [
-                      (final: prev: {
-                        inherit (import ../pkgs {
+            modules = (import ../modules/module-list.nix) ++ [
+              module
+              {
+                config = {
+                  data = if isPath data then import data else data;
+                  nixpkgs.buildUsing = mkOptionDefault bootstrapNixpkgs;
+                  nixpkgs.overlays = [
+                    (final: prev: {
+                      inherit
+                        (import ../pkgs {
                           inherit (prev) callPackage;
                           craneLib = crane.mkLib prev;
-                        }) fleet-install-secrets fleet-generator-helper;
-                      })
-                    ];
-                  };
-                }
-              ];
+                        })
+                        fleet-install-secrets
+                        fleet-generator-helper
+                        ;
+                    })
+                  ];
+                };
+              }
+            ];
             specialArgs = {
               inherit inputs self;
               fleetLib = import ../lib {
@@ -84,21 +93,19 @@ in {
             };
           };
         in
-          normalEval
-      )
-      nameToModule;
+        normalEval
+      ) nameToModule;
   };
   config = {
-    _module.args.fleetLib = import ../lib {inherit lib;};
+    _module.args.fleetLib = import ../lib { inherit lib; };
     flake.fleetConfigurations = config.fleetConfigurations;
-    flake.nixosConfigurations = let
-      cfg = config.fleetNixosConfigurationsCompat;
-    in
-      mkIf cfg.enable
-      (
-        mapAttrs
-        (name: host: host.nixos)
-        (config.fleetConfigurations.${cfg.configuration} cfg.data).config.hosts
+    flake.nixosConfigurations =
+      let
+        cfg = config.fleetNixosConfigurationsCompat;
+      in
+      mkIf cfg.enable (
+        mapAttrs (name: host: host.nixos)
+          (config.fleetConfigurations.${cfg.configuration} cfg.data).config.hosts
       );
     flake.fleetModules = config.fleetModules;
   };

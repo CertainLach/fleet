@@ -6,7 +6,8 @@
   config,
   _fleetFlakeRootConfig,
   ...
-}: let
+}:
+let
   inherit (lib.attrsets) mapAttrs;
   inherit (lib.options) mkOption;
   inherit (lib.types) deferredModule unspecified;
@@ -15,7 +16,8 @@
   inherit (fleetLib.options) mkHostsOption;
 
   _file = ./nixos.nix;
-in {
+in
+{
   options = {
     nixos = mkOption {
       description = ''
@@ -31,26 +33,33 @@ in {
             Nixos configuration for the current host.
           '';
           type = deferredModule;
-          apply = module: let
-            inherit (hostArgs.config) system;
-          in
+          apply =
+            module:
+            let
+              inherit (hostArgs.config) system;
+            in
             config.nixpkgs.buildUsing.lib.nixosSystem {
               inherit system;
               modules = [
-                (module // {key = "attr<host.nixos>";})
-                (config.nixos // {key = "attr<fleet.nixos>";})
+                (module // { key = "attr<host.nixos>"; })
+                (config.nixos // { key = "attr<fleet.nixos>"; })
               ];
               specialArgs = {
                 inherit fleetLib inputs self;
-                inputs' = mapAttrs (inputName: input:
-                  builtins.addErrorContext "while retrieving system-dependent attributes for input ${escapeNixIdentifier inputName}"
-                  (
-                    if input._type or null == "flake"
-                    then _fleetFlakeRootConfig.perInput system input
-                    else "input is not a flake, perhaps flake = false was added to te input declaration?"
-                  ))
-                inputs;
-                self' = builtins.addErrorContext "while retrieving system-dependent attributes for a flake's own outputs" (_fleetFlakeRootConfig.perInput system self);
+                inputs' = mapAttrs (
+                  inputName: input:
+                  builtins.addErrorContext
+                    "while retrieving system-dependent attributes for input ${escapeNixIdentifier inputName}"
+                    (
+                      if input._type or null == "flake" then
+                        _fleetFlakeRootConfig.perInput system input
+                      else
+                        "input is not a flake, perhaps flake = false was added to te input declaration?"
+                    )
+                ) inputs;
+                self' = builtins.addErrorContext "while retrieving system-dependent attributes for a flake's own outputs" (
+                  _fleetFlakeRootConfig.perInput system self
+                );
               };
             };
         };
@@ -80,8 +89,7 @@ in {
     });
   };
   imports = [
-    (mkRemovedOptionModule ["nixosModules"] "replaced with nixos.imports.")
+    (mkRemovedOptionModule [ "nixosModules" ] "replaced with nixos.imports.")
   ];
-  config.nixos.imports =
-    import ./nixos/module-list.nix;
+  config.nixos.imports = import ./nixos/module-list.nix;
 }

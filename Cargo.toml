@@ -12,12 +12,12 @@ fleet-shared = { path = "./crates/fleet-shared" }
 nix-eval = { path = "./crates/nix-eval" }
 
 tokio = { version = "1.36.0", features = [
-	"fs",
-	"rt",
-	"macros",
-	"sync",
-	"time",
-	"rt-multi-thread",
+  "fs",
+  "rt",
+  "macros",
+  "sync",
+  "time",
+  "rt-multi-thread",
 ] }
 tokio-util = { version = "0.7.11", features = ["codec"] }
 clap = { version = "4.5", features = ["derive", "env", "wrap_help", "unicode"] }
