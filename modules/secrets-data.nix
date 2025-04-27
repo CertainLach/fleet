@@ -132,14 +132,16 @@ in
             sort (a: b: a < b) (config.data.sharedSecrets.${name} or { owners = [ ]; }).owners
             == sort (a: b: a < b) secret.expectedOwners;
         message = "Shared secret ${name} is expected to be encrypted for ${toJSON secret.expectedOwners}, but it is encrypted for ${
-          toJSON config.data.sharedSecrets.${name}.owners
+          toJSON (config.data.sharedSecrets.${name} or { owners = [ ]; }).owners
         }. Run fleet secrets regenerate to fix";
       }) config.sharedSecrets)
       ++ (mapAttrsToList (name: secret: {
         # TODO: Same aassertion should be in host secrets
-        assertion = config.data.sharedSecrets.${name}.generationData == secret.expectedGenerationData;
+        assertion =
+          (config.data.sharedSecrets.${name} or { generationData = null; }).generationData
+          == secret.expectedGenerationData;
         message = "Shared secret ${name} has unexpected generation data ${toJSON secret.expectedGenerationData} != ${
-          toJSON config.data.sharedSecrets.${name}.expectedGenerationData
+          toJSON (config.data.sharedSecrets.${name} or { generationData = null; }).generationData
         }. Run fleet secrets regenerate to fix";
       }) config.sharedSecrets);
     sharedSecrets = mapAttrs (_: _: { }) config.data.sharedSecrets;
