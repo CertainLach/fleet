@@ -7,53 +7,51 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nixlike.workspace = true
-better-command.workspace = true
-tokio.workspace = true
-clap.workspace = true
-clap_complete.workspace = true
 age = { workspace = true, features = ["armor"] }
 anyhow.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
+better-command.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+fleet-shared.workspace = true
+nix-eval.workspace = true
+nixlike.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
-time = { version = "0.3", features = ["serde"] }
-hostname = "0.4.0"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+abort-on-drop = "0.2"
 age-core = "0.11"
-peg = "0.8"
+async-trait = "0.1"
 base64 = "0.22.1"
 chrono = { version = "0.4", features = ["serde"] }
-tokio-util = { version = "0.7", features = ["codec"] }
-async-trait = "0.1"
+crossterm = { version = "0.28.0", features = ["use-dev-tty"] }
 futures = "0.3"
+hostname = "0.4.0"
 itertools = "0.13"
+openssh = "0.11"
+owo-colors = { version = "4.0", features = ["supports-color", "supports-colors"] }
+peg = "0.8"
+regex = "1.10"
 shlex = "1.3"
 tabled = { version = "0.16" }
-owo-colors = { version = "4.0", features = [
-  "supports-color",
-  "supports-colors",
-] }
-abort-on-drop = "0.2"
-regex = "1.10"
-openssh = "0.11"
-crossterm = { version = "0.28.0", features = ["use-dev-tty"] }
-fleet-shared.workspace = true
+time = { version = "0.3", features = ["serde"] }
+tokio-util = { version = "0.7", features = ["codec"] }
 
-tracing-indicatif = { version = "0.3", optional = true }
+fleet-base = { version = "0.1.0", path = "../../crates/fleet-base" }
 human-repr = { version = "1.1", optional = true }
 indicatif = { version = "0.17", optional = true }
-nix-eval.workspace = true
 nom = "7.1.3"
-fleet-base = { version = "0.1.0", path = "../../crates/fleet-base" }
+tracing-indicatif = { version = "0.3", optional = true }
 
 [features]
 default = ["indicatif"]
 # Not quite stable
 indicatif = [
-  "dep:tracing-indicatif",
-  "dep:indicatif",
-  "dep:human-repr",
-  "better-command/indicatif",
+	"dep:tracing-indicatif",
+	"dep:indicatif",
+	"dep:human-repr",
+	"better-command/indicatif",
 ]

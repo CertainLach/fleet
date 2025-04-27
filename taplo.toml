@@ -1,7 +1,5 @@
 [formatting]
-inline_table_expand = false
 indent_string = "\t"
-array_auto_expand = false
 
 [[rule]]
 include = ["**/Cargo.toml"]

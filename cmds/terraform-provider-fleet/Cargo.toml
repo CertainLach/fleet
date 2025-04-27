@@ -6,7 +6,8 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-async-trait = "0.1.81"
 serde = { workspace = true, features = ["derive"] }
-tf-provider = "0.2.2"
 tokio.workspace = true
+
+async-trait = "0.1.81"
+tf-provider = "0.2.2"
