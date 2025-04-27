@@ -6,10 +6,11 @@ rust-version.workspace = true
 
 [dependencies]
 thiserror.workspace = true
+
 alejandra = { git = "https://github.com/kamadorueda/alejandra" }
 linked-hash-map = "0.5.6"
 peg = "0.8.2"
-serde = "1.0.196"
-serde_json = "1.0.113"
 ron = "0.8.1"
+serde = "1.0.196"
 serde-transcode = "1.1.1"
+serde_json = "1.0.113"
