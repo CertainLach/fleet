@@ -225,6 +225,7 @@ impl NixSessionInner {
 		flake: &OsStr,
 		extra_args: impl IntoIterator<Item = &OsStr>,
 		nix_system: String,
+		fail_fast: bool,
 	) -> Result<Self> {
 		let mut cmd = Command::new("nix");
 		cmd.arg("repl")
@@ -232,6 +233,9 @@ impl NixSessionInner {
 			.arg(flake)
 			.arg("--log-format")
 			.arg("internal-json");
+		if !fail_fast {
+			cmd.arg("--keep-going");
+		}
 		for arg in extra_args {
 			cmd.arg(arg);
 		}

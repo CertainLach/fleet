@@ -87,6 +87,13 @@ pub struct FleetOpts {
 	/// binfmt-declared qemu instead of trying to crosscompile
 	#[clap(long, default_value = env!("NIX_SYSTEM"))]
 	pub local_system: String,
+
+	/// By default fleet continues on single derivation build failure
+	/// this flag makes command fail immediately
+	///
+	/// Opposite of Nix's --keep-going
+	#[clap(long)]
+	pub fail_fast: bool,
 }
 
 impl FleetOpts {
@@ -204,6 +211,7 @@ impl FleetOpts {
 			directory.as_os_str().to_owned(),
 			nix_args.clone(),
 			self.local_system.clone(),
+			self.fail_fast,
 		)
 		.await?;
 		let nix_session = pool.get().await?;

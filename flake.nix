@@ -136,7 +136,7 @@
                 inherit (packages) fleet-install-secrets;
               })
               // {
-                checks.formatting = treefmt.check self;
+                formatting = treefmt.check self;
               };
             # TODO: It should be possible to move lib.mkIf to default attribute, instead of disabling the whole
             # devShells block, yet nix flake check fails here, due to no default shell found. It is nix or flake-parts bug?
