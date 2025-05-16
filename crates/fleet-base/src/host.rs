@@ -161,7 +161,7 @@ impl ConfigHost {
 		let session = session
 			.connect(&self.name)
 			.await
-			.map_err(|e| anyhow!("ssh error while connecting to {}: {e}", self.name))?;
+			.map_err(|e| anyhow!("ssh error while connecting to {}: {e:#?}", self.name))?;
 		let session = Arc::new(session);
 		self.session.set(session.clone()).expect("TOCTOU happened");
 		Ok(session)
