@@ -320,7 +320,7 @@ impl ConfigHost {
 					.arg("--no-check-sigs")
 					.comparg(
 						"--to",
-						format!("ssh-ng://root@{}-install?remote-store=/mnt", self.name),
+						format!("ssh-ng://root@{}?remote-store=/mnt", self.name),
 					);
 			}
 		}
