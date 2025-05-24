@@ -5,6 +5,7 @@
 }:
 let
   inherit (lib.options) mkOption;
+  inherit (lib.modules) mkIf mkDefault;
   inherit (lib.types)
     attrsOf
     str
@@ -80,4 +81,12 @@ in
       supportsDryActivation = true;
     };
   } // config.system.onlineActivationScripts;
+
+  config.systemd.services = mkIf config.networking.networkmanager.enable {
+    # If machine is managed by fleet, we should not restart NetworkManager during activation,
+    # as it will disrupt the activation process. Furthermore, NetworkManager is not declarative,
+    # so even if user wants to update his network settings - disabled NetworkManager restart
+    # will not affect that.
+    NetworkManager.restartIfChanged = mkDefault false;
+  };
 }
